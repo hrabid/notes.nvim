@@ -1,0 +1,50 @@
+*notes.txt*  Templates and markdown links for Obsidian vaults
+
+==============================================================================
+SETUP                                                          *notes-setup*
+
+>lua
+    require("notes").setup({
+      vault_path        = nil,
+      template_dir      = "templates",
+      new_note_dir      = nil,
+      auto_inject       = true,
+      default_template  = nil,
+      inject_at_cursor  = false,
+      confirm_overwrite = true,
+      date_format       = "%Y-%m-%d",
+      time_format       = "%H:%M",
+      link_display      = "filename",
+      wikilinks         = false,
+      link_stack_max    = 50,
+      picker            = "auto",
+      keymaps           = true,
+    })
+<
+
+==============================================================================
+COMMANDS                                                    *notes-commands*
+
+:TemplateInsert [name]   Inject template `name`, or open the picker.
+:TemplateReload          Re-read the templates directory.
+:NotesVault              Print the detected vault root.
+:NoteNew [name]          Create a note in new_note_dir.
+
+==============================================================================
+KEYMAPS                                                      *notes-keymaps*
+
+<leader>mt   Template picker
+<leader>ml   Link a file
+<leader>mh   Link a header (file, then header)
+<leader>mn   New note (global)
+<leader>mb   Back through followed links
+<leader>mr   Reload templates
+<leader>mv   Print vault root
+gf           Follow markdown link under cursor
+
+==============================================================================
+TEMPLATE VARIABLES                                        *notes-variables*
+
+{{date}} {{time}} {{datetime}} {{filename}} {{title}} {{uuid}} {{cursor}}
+
+vim:tw=78:ts=8:ft=help:norl:
