@@ -21,6 +21,14 @@ function M._push_stack(file, line, col)
   end
 end
 
+function M.rename_stack(old, new)
+  for _, e in ipairs(stack) do
+    if e.file == old then
+      e.file = new
+    end
+  end
+end
+
 function M._pop_stack()
   return table.remove(stack)
 end

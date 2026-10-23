@@ -146,6 +146,27 @@ local function walk(dir, rel, out, depth)
   end
 end
 
+local function walk_dirs(dir, rel, out, depth)
+  if depth > 20 then
+    return
+  end
+  for name, t in vim.fs.dir(dir) do
+    if name:sub(1, 1) ~= "." and t == "directory" then
+      local r = rel == "" and name or (rel .. "/" .. name)
+      out[#out + 1] = r
+      walk_dirs(dir .. "/" .. name, r, out, depth + 1)
+    end
+  end
+end
+
+--- All directories under root (relative paths, hidden dirs skipped).
+function M.list_dirs_recursive(root)
+  local out = {}
+  walk_dirs(root, "", out, 0)
+  table.sort(out)
+  return out
+end
+
 --- All .md files under root (relative paths, hidden dirs skipped).
 function M.list_md_recursive(root)
   local out = {}

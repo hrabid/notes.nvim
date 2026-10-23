@@ -34,6 +34,7 @@ Variables: `{{date}} {{time}} {{datetime}} {{filename}} {{title}} {{uuid}} {{cur
 | `<leader>ml` | file picker → `[name](rel/path.md)`      |
 | `<leader>mh` | file picker → header picker → `[h](f.md#anchor)` |
 | `<leader>mn` | new note in `new_note_dir` (global map, prompts for name) |
+| `<leader>mm` | move current note to another directory (picker) |
 | `<leader>mb` | back through link-follow history         |
 | `<leader>mr` | re-read templates dir                    |
 | `<leader>mv` | print vault root                         |
@@ -44,7 +45,7 @@ Variables: `{{date}} {{time}} {{datetime}} {{filename}} {{title}} {{uuid}} {{cur
 
 ## Commands
 
-`:TemplateInsert [name]`, `:TemplateReload`, `:NotesVault`, `:NoteNew [name]`
+`:TemplateInsert [name]`, `:TemplateReload`, `:NotesVault`, `:NoteNew [name]`, `:NoteMove [dir]`
 
 ## Notes
 

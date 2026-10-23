@@ -34,6 +34,7 @@ M.config = vim.deepcopy(M.defaults)
 local vault = require("notes.vault")
 local template = require("notes.template")
 local links = require("notes.links")
+local move = require("notes.move")
 local picker = require("notes.picker")
 local util = require("notes.util")
 
@@ -144,6 +145,9 @@ local function attach(bufnr)
     links.insert_header_link(bufnr)
   end), "link header")
   map("<leader>mb", guard(links.go_back), "go back")
+  map("<leader>mm", guard(function()
+    move.pick(bufnr)
+  end), "move note")
   map("<leader>mr", reload, "reload templates")
   map("<leader>mv", show_vault, "show vault")
 end
@@ -173,6 +177,26 @@ function M.setup(opts)
   vim.api.nvim_create_user_command("NoteNew", function(o)
     M.new_note(o.args)
   end, { nargs = "?", desc = "Create a note in new_note_dir" })
+  vim.api.nvim_create_user_command("NoteMove", function(o)
+    local buf = vim.api.nvim_get_current_buf()
+    if o.args ~= "" then
+      move.to_dir(buf, o.args)
+    else
+      move.pick(buf)
+    end
+  end, {
+    nargs = "?",
+    desc = "Move current note to a directory (picker if none given)",
+    complete = function(lead)
+      local root = vault.get_root()
+      if not root then
+        return {}
+      end
+      return vim.tbl_filter(function(d)
+        return d:find(lead, 1, true) == 1
+      end, util.list_dirs_recursive(root))
+    end,
+  })
   if M.config.keymaps then
     vim.keymap.set("n", "<leader>mn", function()
       M.new_note()

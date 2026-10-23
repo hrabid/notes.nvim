@@ -29,6 +29,7 @@ COMMANDS                                                    *notes-commands*
 :TemplateReload          Re-read the templates directory.
 :NotesVault              Print the detected vault root.
 :NoteNew [name]          Create a note in new_note_dir.
+:NoteMove [dir]          Move the current note to dir (picker if omitted).
 
 ==============================================================================
 KEYMAPS                                                      *notes-keymaps*
@@ -37,6 +38,7 @@ KEYMAPS                                                      *notes-keymaps*
 <leader>ml   Link a file
 <leader>mh   Link a header (file, then header)
 <leader>mn   New note (global)
+<leader>mm   Move note to another directory
 <leader>mb   Back through followed links
 <leader>mr   Reload templates
 <leader>mv   Print vault root
