@@ -281,6 +281,33 @@ function M.follow_link(_)
   end
 end
 
+--- Open `path` (optionally at heading `anchor`) like following a link: the origin is
+--- pushed on the back stack (<leader>mb).
+function M.open_path(path, anchor)
+  local pos = vim.api.nvim_win_get_cursor(0)
+  local cur = vim.api.nvim_buf_get_name(0)
+  if path ~= cur then
+    local ok, err = pcall(vim.cmd, "edit " .. vim.fn.fnameescape(path))
+    if not ok then
+      util.notify(tostring(err), vim.log.levels.ERROR)
+      return
+    end
+  end
+  if cur ~= "" then
+    M._push_stack(cur, pos[1], pos[2])
+  end
+  if anchor then
+    local lnum = M._resolve_anchor(0, anchor)
+    if lnum then
+      vim.api.nvim_win_set_cursor(0, { lnum, 0 })
+      vim.cmd("normal! zz")
+    else
+      util.notify("anchor not found: #" .. anchor, vim.log.levels.WARN)
+      vim.api.nvim_win_set_cursor(0, { 1, 0 })
+    end
+  end
+end
+
 function M.go_back()
   local entry = M._pop_stack()
   if not entry then

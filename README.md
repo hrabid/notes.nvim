@@ -37,7 +37,8 @@ Variables: `{{date}} {{time}} {{datetime}} {{filename}} {{title}} {{uuid}} {{cur
 | `<leader>mm` | move current note to another directory (picker) |
 | `<leader>mo` | outline picker for the buffer (telescope preview), jump to heading |
 | `<leader>mO` | toggle outline sidebar |
-| `<leader>me` | preview the embed under the cursor (note / image) |
+| `<leader>me` | preview the link/embed under the cursor (note / image) |
+| `<C-LeftMouse>` | ctrl+click a link/embed to preview it (needs `mouse` enabled) |
 | `<leader>mE` | toggle inline note embeds (virtual lines) |
 | `<leader>mi` | toggle inline images for this buffer |
 | `<leader>mb` | back through link-follow history         |
@@ -71,10 +72,16 @@ Keys inside the sidebar:
 
 ## Embeds
 
-`<leader>me` previews the embed under the cursor (or the one on the line):
+`<leader>me` (or ctrl+click) previews the link or embed under the cursor (or the embed on the line):
 `![[note]]`, `![[note#heading]]`, `![alt](note.md)`, `![[img.png]]`, `![alt](img.png)`.
-Notes open in a floating window (press `<leader>me` again to enter and scroll it, `q` closes).
-`<leader>mE` shows note embeds inline as virtual lines (`embed_inline = true` to enable automatically).
+Plain links work too: `[text](note.md#heading)`, `[[note]]`, `[pic](img.png)`, `[x](#heading)`.
+
+The preview stays until you dismiss it: `Esc` / `q` close it, `Enter` opens the previewed note in the current window
+(markdown only; `<leader>mb` returns, and the heading is jumped to), `<C-d>` / `<C-u>` scroll long notes.
+Pressing `<leader>me` again moves into the float; ctrl+clicking another link replaces it. The keys are temporary
+buffer-local mappings; your own buffer-local `Esc`/`q`/`Enter` mappings come back when the preview closes.
+Ctrl+click needs `set mouse=a` (and `set -g mouse on` in tmux); hold shift if the terminal grabs the click.
+Note embeds are rendered inline as virtual lines by default, just like images (`embed_inline = false` to disable, `<leader>mE` toggles per buffer).
 
 Images try `embed_backends` in order until one works (default `{ "kitty", "kitty-direct", "chafa", "viu", "external" }`):
 

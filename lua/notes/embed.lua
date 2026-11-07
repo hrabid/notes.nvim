@@ -23,38 +23,59 @@ end
 
 -- ── parsing (pure) ───────────────────────────────────────────────────
 
---- Embeds in a line, ordered by position: { s, e, target, anchor, wiki, url }.
-function M._find_embeds(line)
+local function parse_wiki(inner)
+  local target = inner:match("^([^|]*)")
+  local path, anchor = target:match("^([^#]*)#?(.*)$")
+  return vim.trim(path), anchor ~= "" and anchor or nil
+end
+
+--- Links and embeds in a line, ordered by position:
+--- { s, e, target, anchor, wiki, url, embed }  (embed = preceded by "!").
+function M._find_refs(line)
   local out = {}
   local init = 1
   while true do
-    local s, e, inner = line:find("!%[%[([^%]]+)%]%]", init)
+    local s, e, inner = line:find("%[%[([^%]]+)%]%]", init)
     if not s then
       break
     end
-    local target = inner:match("^([^|]*)")
-    local path, anchor = target:match("^([^#]*)#?(.*)$")
-    out[#out + 1] = { s = s, e = e, target = vim.trim(path), anchor = anchor ~= "" and anchor or nil, wiki = true }
+    local path, anchor = parse_wiki(inner)
+    local emb = s > 1 and line:sub(s - 1, s - 1) == "!"
+    out[#out + 1] = { s = emb and s - 1 or s, e = e, target = path, anchor = anchor, wiki = true, embed = emb }
     init = e + 1
   end
   init = 1
   while true do
-    local s, e, _, raw = line:find("!%[([^%]]*)%]%(([^)]*)%)", init)
+    local s, e, _, raw = line:find("%[([^%]]*)%]%(([^)]*)%)", init)
     if not s then
       break
     end
+    local emb = s > 1 and line:sub(s - 1, s - 1) == "!"
     local t = raw:match("^%s*<(.-)>") or raw:match("^%s*(%S+)") or ""
+    local ref = { s = emb and s - 1 or s, e = e, wiki = false, embed = emb }
     if t:match("^%a[%w+.-]*://") then
-      out[#out + 1] = { s = s, e = e, target = t, url = t, wiki = false }
+      ref.target, ref.url = t, t
     else
       local path, anchor = t:match("^([^#]*)#?(.*)$")
-      out[#out + 1] = { s = s, e = e, target = util.url_decode(path), anchor = anchor ~= "" and anchor or nil, wiki = false }
+      ref.target, ref.anchor = util.url_decode(path), anchor ~= "" and anchor or nil
     end
+    out[#out + 1] = ref
     init = e + 1
   end
-  table.sort(out, function(a, b)
-    return a.s < b.s
+  table.sort(out, function(x, y)
+    return x.s < y.s
   end)
+  return out
+end
+
+--- Only the embeds (![[...]] / ![](...)).
+function M._find_embeds(line)
+  local out = {}
+  for _, r in ipairs(M._find_refs(line)) do
+    if r.embed then
+      out[#out + 1] = r
+    end
+  end
   return out
 end
 
@@ -67,6 +88,26 @@ function M._pick_embed(embeds, col)
     end
   end
   return embeds[1]
+end
+
+--- Ref under the cursor column (0-based). mode "key": else first embed, else first ref;
+--- mode "mouse": else first embed on the line, else nil.
+function M._pick_ref(refs, col, mode)
+  local c = col + 1
+  for _, r in ipairs(refs) do
+    if c >= r.s and c <= r.e then
+      return r
+    end
+  end
+  for _, r in ipairs(refs) do
+    if r.embed then
+      return r
+    end
+  end
+  if mode ~= "mouse" then
+    return refs[1]
+  end
+  return nil
 end
 
 function M._kind(e)
@@ -276,9 +317,28 @@ end
 
 -- ── floating window plumbing ─────────────────────────────────────────
 
-local float = nil -- { win, aug, on_close, focusable }
+local float = nil -- { win, aug, on_close, focusable, src, target, keys, saved }
+local ctx = { buf = nil, target = nil } -- who asked for the preview (set by M.preview)
+local close_float, enter_note
 
-local function close_float()
+local function restore_keys(f)
+  local b = f.src
+  if not (b and f.keys and vim.api.nvim_buf_is_valid(b)) then
+    return
+  end
+  for _, lhs in ipairs(f.keys) do
+    pcall(vim.keymap.del, "n", lhs, { buffer = b })
+    local saved = f.saved and f.saved[lhs]
+    if saved then
+      pcall(vim.api.nvim_buf_call, b, function()
+        vim.fn.mapset("n", false, saved)
+      end)
+    end
+  end
+  f.keys = nil
+end
+
+close_float = function()
   if not float then
     return
   end
@@ -287,6 +347,7 @@ local function close_float()
   if f.aug then
     pcall(vim.api.nvim_del_augroup_by_id, f.aug)
   end
+  restore_keys(f)
   if f.on_close then
     pcall(f.on_close)
   end
@@ -295,16 +356,77 @@ local function close_float()
   end
 end
 
+-- Enter: open the previewed note in the source window (link stack + heading jump)
+enter_note = function()
+  local f = float
+  if not (f and f.target) then
+    return
+  end
+  local t, src = f.target, f.src
+  close_float()
+  local w = src and vim.fn.bufwinid(src) or -1
+  if w ~= -1 then
+    vim.api.nvim_set_current_win(w)
+  end
+  require("notes.links").open_path(t.path, t.anchor)
+end
+
+local function scroll(f, key)
+  if vim.api.nvim_win_is_valid(f.win) then
+    vim.api.nvim_win_call(f.win, function()
+      vim.cmd("normal! " .. key)
+    end)
+  end
+end
+
+-- While a preview is open the source buffer gets temporary keys; the previous
+-- buffer-local mappings (if any) are restored on close.
+local function install_keys(f)
+  local b = f.src
+  if not (b and vim.api.nvim_buf_is_valid(b)) then
+    return
+  end
+  f.keys, f.saved = {}, {}
+  local function map(lhs, fn)
+    local m = vim.api.nvim_buf_call(b, function()
+      return vim.fn.maparg(lhs, "n", false, true)
+    end)
+    if type(m) == "table" and m.buffer == 1 then
+      f.saved[lhs] = m
+    end
+    vim.keymap.set("n", lhs, fn, { buffer = b, nowait = true, desc = "Notes: preview" })
+    f.keys[#f.keys + 1] = lhs
+  end
+  map("<Esc>", close_float)
+  map("q", close_float)
+  if f.target then
+    map("<CR>", enter_note)
+    map("<C-d>", function()
+      scroll(f, "\4")
+    end)
+    map("<C-u>", function()
+      scroll(f, "\21")
+    end)
+  end
+end
+
+--- Called right after a float is created: the preview stays until Esc/q (or <CR> for notes).
 local function arm_autoclose()
+  local f = float
+  if not f then
+    return
+  end
+  f.src, f.target = ctx.buf, ctx.target
   vim.schedule(function()
-    if not float then
+    if float ~= f then
       return
     end
-    float.aug = vim.api.nvim_create_augroup("NotesEmbedFloat", { clear = true })
-    vim.api.nvim_create_autocmd({ "CursorMoved", "CursorMovedI", "InsertEnter", "BufLeave", "VimResized" }, {
-      group = float.aug,
-      callback = close_float,
-    })
+    f.aug = vim.api.nvim_create_augroup("NotesEmbedFloat", { clear = true })
+    if f.src and vim.api.nvim_buf_is_valid(f.src) then
+      vim.api.nvim_create_autocmd({ "InsertEnter", "BufLeave" }, { group = f.aug, buffer = f.src, callback = close_float })
+    end
+    vim.api.nvim_create_autocmd("VimResized", { group = f.aug, callback = close_float })
+    install_keys(f)
   end)
 end
 
@@ -330,16 +452,21 @@ local function open_win(buf, w, h, border, title, focusable)
   return vim.api.nvim_open_win(buf, false, conf)
 end
 
+-- second <leader>me on a note preview: move into the float to scroll/read it
 local function focus_float()
   local f = float
   if f.aug then
     pcall(vim.api.nvim_del_augroup_by_id, f.aug)
     f.aug = nil
   end
+  restore_keys(f)
   vim.api.nvim_set_current_win(f.win)
   local b = vim.api.nvim_win_get_buf(f.win)
   for _, k in ipairs({ "q", "<Esc>" }) do
     vim.keymap.set("n", k, close_float, { buffer = b, nowait = true })
+  end
+  if f.target then
+    vim.keymap.set("n", "<CR>", enter_note, { buffer = b, nowait = true })
   end
   vim.api.nvim_create_autocmd("WinLeave", {
     buffer = b,
@@ -531,44 +658,74 @@ local function attempt(path, idx)
   end
 end
 
--- ── public: preview under cursor ─────────────────────────────────────
+-- ── public: preview under cursor / mouse ────────────────────────────
 
-function M.preview()
+--- Preview the link or embed under the cursor.
+--- Esc/q close it, <CR> opens a previewed note, <C-d>/<C-u> scroll it.
+function M.preview(opts)
+  opts = opts or {}
   if float and vim.api.nvim_win_is_valid(float.win) then
-    if float.focusable then
-      focus_float()
-    else
-      close_float()
+    if not opts.replace then
+      if float.focusable then
+        focus_float()
+      else
+        close_float()
+      end
+      return
+    end
+    close_float()
+  end
+  local refs = M._find_refs(vim.api.nvim_get_current_line())
+  local e = M._pick_ref(refs, vim.api.nvim_win_get_cursor(0)[2], opts.mouse and "mouse" or "key")
+  if not e then
+    if not opts.mouse then
+      util.notify("no link or embed on this line")
     end
     return
   end
-  local embeds = M._find_embeds(vim.api.nvim_get_current_line())
-  if #embeds == 0 then
-    util.notify("no embed on this line")
-    return
-  end
-  local e = M._pick_embed(embeds, vim.api.nvim_win_get_cursor(0)[2])
   local kind = M._kind(e)
   if kind == "url" then
     vim.ui.open(e.url)
     return
   end
-  local path = M._resolve(e, vim.api.nvim_buf_get_name(0))
+  local cur = vim.api.nvim_buf_get_name(0)
+  local path
+  if e.target == "" then
+    path = e.anchor and cur ~= "" and cur or nil -- [x](#heading): section of this note
+  else
+    path = M._resolve(e, cur)
+  end
   if not path then
-    local base = vim.fs.dirname(vim.api.nvim_buf_get_name(0))
+    local base = vim.fs.dirname(cur)
     util.notify(
-      ("embed target not found: %s (tried %s and %s)"):format(e.target, base, vault.get_root() or "no vault detected - see :NotesVault"),
+      ("target not found: %s (tried %s and %s)"):format(e.target, base, vault.get_root() or "no vault detected - see :NotesVault"),
       vim.log.levels.WARN
     )
     return
   end
+  ctx.buf, ctx.target = vim.api.nvim_get_current_buf(), nil
   if kind == "note" then
+    ctx.target = { path = path, anchor = e.anchor }
     show_note(path, e.anchor)
   elseif kind == "image" then
     attempt(path, 1)
   else
     vim.ui.open(path)
   end
+end
+
+--- <C-LeftMouse>: preview the link/embed that was clicked (needs 'mouse' enabled).
+function M.preview_mouse()
+  local m = vim.fn.getmousepos()
+  if m.winid == 0 or m.line == 0 or (float and m.winid == float.win) then
+    return
+  end
+  local buf = vim.api.nvim_win_get_buf(m.winid)
+  local line = vim.api.nvim_buf_get_lines(buf, m.line - 1, m.line, false)[1] or ""
+  vim.api.nvim_set_current_win(m.winid)
+  local col = math.min(math.max(m.column - 1, 0), math.max(#line - 1, 0))
+  pcall(vim.api.nvim_win_set_cursor, m.winid, { m.line, col })
+  M.preview({ mouse = true, replace = true })
 end
 
 -- ── inline rendering (notes as virtual lines, images as placeholders) ─

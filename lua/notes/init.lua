@@ -28,7 +28,7 @@ M.defaults = {
 
   -- embeds: image backends are tried in order until one works
   embed_backends = { "kitty", "kitty-direct", "chafa", "viu", "external" },
-  embed_inline = false, -- render ![[note]] embeds as virtual lines automatically
+  embed_inline = true, -- render ![[note]] embeds as virtual lines automatically (like images)
   embed_inline_lines = 8, -- max lines shown per inline note embed
 
   -- native images (kitty graphics protocol: Ghostty, kitty; also through tmux)
@@ -189,7 +189,8 @@ local function attach(bufnr)
     outline.open(bufnr)
   end, "outline picker")
   map("<leader>mO", outline.toggle, "outline sidebar")
-  map("<leader>me", embed.preview, "preview embed")
+  map("<leader>me", embed.preview, "preview link/embed")
+  map("<C-LeftMouse>", embed.preview_mouse, "preview link/embed under mouse")
   map("<leader>mE", function()
     embed.toggle_inline(bufnr)
   end, "toggle inline note embeds")

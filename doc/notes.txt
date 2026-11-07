@@ -25,7 +25,7 @@ SETUP                                                          *notes-setup*
       image_max_cols    = 70,
       image_max_rows    = 22,
       image_cell_ratio  = 2.0,
-      embed_inline      = false,
+      embed_inline      = true,
       embed_inline_lines = 8,
       attachment_dir    = nil,
       attachment_dirs   = { "attachments", "assets", "static", "img", "images", "files", "media", "resources", "pics" },
@@ -59,7 +59,7 @@ KEYMAPS                                                      *notes-keymaps*
 <leader>mm   Move note to another directory
 <leader>mo   Outline picker
 <leader>mO   Outline sidebar
-<leader>me   Preview embed under cursor
+<leader>me   Preview link/embed under cursor (also <C-LeftMouse>)
 <leader>mE   Toggle inline note embeds
 <leader>mi   Toggle inline images
 <leader>mb   Back through followed links
