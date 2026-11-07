@@ -1,19 +1,21 @@
--- notes.nvim: embed previews for ![[note]], ![[note#heading]], ![[img.png]], ![](img.png)
+-- notes.nvim: embeds: ![[note]], ![[note#heading]], ![[img.png]], ![](img.png)
 --
--- Notes: floating preview (any terminal) + optional inline virtual lines.
--- Images: ordered fallback chain from config.embed_backends, default
---   "kitty"    kitty graphics protocol (kitty, WezTerm, Ghostty; not in tmux/ssh)
---   "chafa"    unicode-block rendering via chafa   (any truecolor/256 terminal)
---   "viu"      unicode-block rendering via viu     (any truecolor/256 terminal)
---   "external" system viewer through vim.ui.open   (xdg-open etc.)
+-- Preview (<leader>me): notes in a float; images through an ordered fallback chain
+-- (config.embed_backends, first one that works wins):
+--   "kitty"        Unicode-placeholder image in a float   (Ghostty, kitty; works in tmux)
+--   "kitty-direct" cursor-positioned kitty protocol        (WezTerm etc.; no tmux/ssh)
+--   "chafa"/"viu"  unicode-block art                       (any 256-colour terminal)
+--   "external"     system viewer through vim.ui.open
+-- Inline: note embeds as virtual lines, images rendered below their line (placeholders).
 local util = require("notes.util")
 local vault = require("notes.vault")
+local image = require("notes.image")
 
 local M = {}
 
 local IMAGE = { png = 1, jpg = 1, jpeg = 1, gif = 1, webp = 1, bmp = 1, svg = 1, avif = 1, tif = 1, tiff = 1 }
 local OTHER = { pdf = 1, mp3 = 1, wav = 1, ogg = 1, flac = 1, m4a = 1, mp4 = 1, mkv = 1, webm = 1, mov = 1, zip = 1, canvas = 1 }
-local KITTY_ID = 7351
+local DIRECT_ID = 7351
 
 local function cfg()
   return require("notes").config
@@ -82,39 +84,152 @@ function M._kind(e)
   return "note"
 end
 
+M._png_size = image.png_size
+
+-- ── resolving ────────────────────────────────────────────────────────
+
 local function is_file(p)
   local st = vim.uv.fs_stat(p)
   return st ~= nil and st.type == "file"
 end
 
+-- note dir and its ancestors up to the vault root
+local function ancestor_dirs(base, root)
+  local out, d, n = {}, base, 0
+  local limit = root and 20 or 3
+  while d and d ~= "" and n < limit do
+    out[#out + 1] = d
+    if root and d == root then
+      break
+    end
+    local parent = vim.fs.dirname(d)
+    if parent == d then
+      break
+    end
+    d, n = parent, n + 1
+  end
+  if root and out[#out] ~= root and (base == root or base:sub(1, #root + 1) == root .. "/") then
+    out[#out + 1] = root
+  end
+  return out
+end
+
+-- configured attachment_dir(s) first, then the conventional folder names
+local function attachment_names()
+  local c = cfg()
+  local list = {}
+  local ad = c.attachment_dir
+  if type(ad) == "string" then
+    ad = { ad }
+  end
+  for _, d in ipairs(ad or {}) do
+    list[#list + 1] = d
+  end
+  for _, d in ipairs(c.attachment_dirs or {}) do
+    list[#list + 1] = d
+  end
+  return list
+end
+
 function M._resolve(e, cur_file)
   local root = vault.get_root()
-  if e.wiki then
-    if not root then
-      return nil
-    end
-    return util.find_file(root, e.target) or util.find_file(root, e.target .. ".md")
+  local base = cur_file ~= "" and vim.fs.dirname(cur_file) or vim.uv.cwd()
+  local names = { e.target }
+  if not e.target:match("%.%w+$") then
+    names[#names + 1] = e.target .. ".md"
   end
-  local cands = {}
-  if e.target:sub(1, 1) == "/" then
-    if root then
-      cands[#cands + 1] = root .. e.target
-    end
-    cands[#cands + 1] = e.target
-  else
-    local base = cur_file ~= "" and vim.fs.dirname(cur_file) or vim.uv.cwd()
-    cands[#cands + 1] = vim.fs.joinpath(base, e.target)
+
+  -- 1. direct: relative to this note, or from the vault root
+  local dirs = { base }
+  if root then
+    dirs[#dirs + 1] = root
   end
-  for _, c in ipairs(cands) do
-    c = vim.fs.normalize(c)
-    if is_file(c) then
-      return c
+  for _, name in ipairs(names) do
+    if name:sub(1, 1) == "/" then
+      if root and is_file(root .. name) then
+        return root .. name
+      end
+      if is_file(name) then
+        return name
+      end
+    else
+      for _, d in ipairs(dirs) do
+        local c = vim.fs.normalize(vim.fs.joinpath(d, name))
+        if is_file(c) then
+          return c
+        end
+      end
     end
-    if not c:match("%.%w+$") and is_file(c .. ".md") then
-      return c .. ".md"
+  end
+
+  -- 2. attachment folders: configured first, then conventional names, looked up next to
+  --    the note, in each parent folder up to the vault root, and (absolute paths) as-is
+  local bases = ancestor_dirs(base, root)
+  for _, ad in ipairs(attachment_names()) do
+    local att_dirs = {}
+    local expanded = util.expand_path(ad)
+    if expanded:sub(1, 1) == "/" then
+      att_dirs[1] = expanded
+    else
+      for _, b in ipairs(bases) do
+        att_dirs[#att_dirs + 1] = b .. "/" .. expanded
+      end
+    end
+    for _, att in ipairs(att_dirs) do
+      if vim.fn.isdirectory(att) == 1 then
+        for _, name in ipairs(names) do
+          local rel = (name:gsub("^/", ""))
+          local c = vim.fs.normalize(vim.fs.joinpath(att, rel))
+          if is_file(c) then
+            return c
+          end
+          local f = util.find_file(att, rel)
+          if f then
+            return f
+          end
+        end
+      end
+    end
+  end
+
+  -- 3. search by name anywhere in the vault (cwd if no vault): Obsidian "shortest path" style
+  local search = root or vim.uv.cwd()
+  for _, icase in ipairs({ false, true }) do
+    for _, name in ipairs(names) do
+      local f = util.find_file(search, (name:gsub("^/", "")), icase)
+      if f then
+        return f
+      end
     end
   end
   return nil
+end
+
+--- Public: resolve a reference as written in a link (attachment or note) to an
+--- absolute path using the same lookup as the preview.
+function M.resolve_path(src, cur_file)
+  local path = util.url_decode((src:gsub("#.*$", "")))
+  return M._resolve({ target = path, wiki = false }, cur_file or vim.api.nvim_buf_get_name(0))
+end
+
+local resolved, missing = {}, {}
+local function resolve_cached(e, cur)
+  local key = cur .. "\0" .. (e.wiki and "w" or "m") .. e.target
+  local p = resolved[key]
+  if p and is_file(p) then
+    return p
+  end
+  local t = missing[key]
+  if t and (vim.uv.now() - t) < 5000 then
+    return nil
+  end
+  p = M._resolve(e, cur)
+  if p then
+    resolved[key], missing[key] = p, nil
+  else
+    missing[key] = vim.uv.now()
+  end
+  return p
 end
 
 --- Body of a note (frontmatter stripped), or just the section under `anchor`.
@@ -157,23 +272,6 @@ function M._note_lines(path, anchor)
     out[#out + 1] = lines[k]
   end
   return out
-end
-
-function M._png_size(path)
-  local f = io.open(path, "rb")
-  if not f then
-    return nil
-  end
-  local head = f:read(24)
-  f:close()
-  if not head or #head < 24 or head:sub(2, 4) ~= "PNG" then
-    return nil
-  end
-  local function be32(i)
-    local a, b, c, d = head:byte(i, i + 3)
-    return ((a * 256 + b) * 256 + c) * 256 + d
-  end
-  return be32(17), be32(21)
 end
 
 -- ── floating window plumbing ─────────────────────────────────────────
@@ -283,65 +381,53 @@ local function show_note(path, anchor)
   arm_autoclose()
 end
 
--- ── image backends ───────────────────────────────────────────────────
+-- ── image preview backends ───────────────────────────────────────────
 
-local function term_write(seq)
-  if vim.api.nvim_ui_send then
-    vim.api.nvim_ui_send(seq) -- Neovim 0.11+
-  else
-    vim.api.nvim_chan_send(vim.v.stderr, seq)
-  end
-end
-
-local function kitty_capable()
-  local env = vim.env
-  if env.TMUX or env.STY or env.SSH_TTY or env.SSH_CONNECTION then
-    return false
-  end
-  return env.KITTY_WINDOW_ID ~= nil
-    or env.GHOSTTY_RESOURCES_DIR ~= nil
-    or env.TERM == "xterm-kitty"
-    or env.TERM == "xterm-ghostty"
-    or env.TERM_PROGRAM == "WezTerm"
-    or env.TERM_PROGRAM == "ghostty"
-end
-
---- Path to a PNG for `path` (converted via ImageMagick when needed), or nil.
-local function to_png(path)
-  if M._png_size(path) then
-    return path
-  end
-  local tool = (vim.fn.executable("magick") == 1 and "magick") or (vim.fn.executable("convert") == 1 and "convert") or nil
-  if not tool then
-    return nil
-  end
-  local st = vim.uv.fs_stat(path)
-  local dir = vim.fn.stdpath("cache") .. "/notes-embeds"
-  vim.fn.mkdir(dir, "p")
-  local out = dir .. "/" .. vim.fn.sha256(path .. (st and st.mtime.sec or 0)) .. ".png"
-  if not is_file(out) then
-    local ok, res = pcall(function()
-      return vim.system({ tool, path .. "[0]", out }):wait(8000)
-    end)
-    if not ok or res.code ~= 0 then
-      return nil
+-- "kitty": placeholder image inside a float (text, so no cursor maths; works in tmux)
+local function show_placeholders(path, on_fail)
+  local maxc = math.floor(vim.o.columns * 0.7)
+  local maxr = math.floor((vim.o.lines - vim.o.cmdheight) * 0.6)
+  local function go(img)
+    local buf = vim.api.nvim_create_buf(false, true)
+    vim.bo[buf].bufhidden = "wipe"
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, img.lines)
+    local pns = vim.api.nvim_create_namespace("notes_preview_img")
+    for i, l in ipairs(img.lines) do
+      vim.api.nvim_buf_set_extmark(buf, pns, i - 1, 0, { end_col = #l, hl_group = img.hl })
     end
+    vim.bo[buf].modifiable = false
+    local win = open_win(buf, img.cols, img.rows, cfg().float_border, vim.fn.fnamemodify(path, ":t"), false)
+    vim.wo[win].wrap = false
+    float = { win = win, focusable = false }
+    arm_autoclose()
   end
-  return is_file(out) and out or nil
+  local img, st = image.prepare(path, { maxc = maxc, maxr = maxr, slot = "float" }, function(e)
+    if e then
+      go(e)
+    else
+      on_fail()
+    end
+  end)
+  if img then
+    go(img)
+  elseif st ~= "pending" then
+    on_fail()
+  end
 end
 
-local function show_kitty(path)
-  local png = to_png(path)
+-- "kitty-direct": cursor-positioned placement drawn over a blank float
+local function show_direct(path)
+  local png = image.png_sync(path)
   if not png then
     return false
   end
-  local w, h = M._png_size(png)
+  local w, h = image.png_size(png)
   if not w then
     return false
   end
   local maxc = math.floor(vim.o.columns * 0.7)
   local maxr = math.floor((vim.o.lines - vim.o.cmdheight) * 0.6)
-  local nc, nr = math.ceil(w / 8), math.ceil(h / 16) -- assume ~8x16 px cells
+  local nc, nr = math.ceil(w / 8), math.ceil(h / 16)
   local scale = math.min(1, maxc / nc, maxr / nr)
   local cols, rows = math.max(1, math.floor(nc * scale)), math.max(1, math.floor(nr * scale))
 
@@ -351,18 +437,18 @@ local function show_kitty(path)
   float = { win = win, focusable = false }
   vim.cmd("redraw")
   local pos = vim.fn.win_screenpos(win)
-  -- ESC7/ESC8 save/restore cursor; q=2 suppresses terminal replies; C=1 keeps the cursor put
-  local seq = ("\0277\27[%d;%dH\27_Ga=T,t=f,f=100,i=%d,c=%d,r=%d,C=1,q=2;%s\27\\\0278"):format(
-    pos[1],
-    pos[2],
-    KITTY_ID,
-    cols,
-    rows,
-    vim.base64.encode(png)
+  image.raw_write(
+    ("\0277\27[%d;%dH\27_Ga=T,t=f,f=100,i=%d,c=%d,r=%d,C=1,q=2;%s\27\\\0278"):format(
+      pos[1],
+      pos[2],
+      DIRECT_ID,
+      cols,
+      rows,
+      vim.base64.encode(png)
+    )
   )
-  term_write(seq)
   float.on_close = function()
-    term_write(("\27_Ga=d,d=I,i=%d,q=2\27\\"):format(KITTY_ID))
+    image.raw_write(("\27_Ga=d,d=I,i=%d,q=2\27\\"):format(DIRECT_ID))
   end
   arm_autoclose()
   return true
@@ -418,14 +504,20 @@ end
 local function attempt(path, idx)
   local name = cfg().embed_backends[idx]
   if not name then
-    util.notify("no image backend could display " .. path, vim.log.levels.WARN)
+    util.notify("no image backend could display " .. path .. " (see :NoteImageStatus)", vim.log.levels.WARN)
     return
   end
   local nextf = function()
     attempt(path, idx + 1)
   end
   if name == "kitty" then
-    if not (kitty_capable() and show_kitty(path)) then
+    if image.capable() then
+      show_placeholders(path, nextf)
+    else
+      nextf()
+    end
+  elseif name == "kitty-direct" then
+    if not (image.direct_capable() and show_direct(path)) then
       nextf()
     end
   elseif name == "chafa" or name == "viu" then
@@ -463,7 +555,11 @@ function M.preview()
   end
   local path = M._resolve(e, vim.api.nvim_buf_get_name(0))
   if not path then
-    util.notify("embed target not found: " .. e.target, vim.log.levels.WARN)
+    local base = vim.fs.dirname(vim.api.nvim_buf_get_name(0))
+    util.notify(
+      ("embed target not found: %s (tried %s and %s)"):format(e.target, base, vault.get_root() or "no vault detected - see :NotesVault"),
+      vim.log.levels.WARN
+    )
     return
   end
   if kind == "note" then
@@ -475,42 +571,90 @@ function M.preview()
   end
 end
 
--- ── inline note embeds (virtual lines) ───────────────────────────────
+-- ── inline rendering (notes as virtual lines, images as placeholders) ─
 
 local ns
-local inline = {}
+local state = { notes = {}, images = {} } -- bufnr -> true
+local timers = {}
+local warned = false
+local schedule_render
 
-local function render_inline(bufnr)
+local function label(text, hl)
+  return { { { "| " .. text, hl or "Comment" } } }
+end
+
+local function embed_virt(bufnr, e, cur, want_notes, want_images, width, c)
+  local kind = M._kind(e)
+  if kind == "url" or kind == "other" then
+    return nil
+  end
+  local path = resolve_cached(e, cur)
+  if not path then
+    return label("not found: " .. e.target, "WarningMsg")
+  end
+  if kind == "note" then
+    if not want_notes then
+      return nil
+    end
+    local limit = c.embed_inline_lines
+    local body = M._note_lines(path, e.anchor) or {}
+    local virt = { { { "| " .. vim.fn.fnamemodify(path, ":t:r") .. (e.anchor and (" > " .. e.anchor) or ""), "Title" } } }
+    for k = 1, math.min(#body, limit) do
+      virt[#virt + 1] = { { "| " .. body[k], "Comment" } }
+    end
+    if #body > limit then
+      virt[#virt + 1] = { { ("| ... (+%d more lines)"):format(#body - limit), "NonText" } }
+    end
+    return virt
+  end
+  -- image
+  local name = vim.fn.fnamemodify(path, ":t")
+  if want_images then
+    local img, st = image.prepare(path, {
+      maxc = math.min(c.image_max_cols, math.max(1, width)),
+      maxr = c.image_max_rows,
+      slot = "inline",
+    }, function()
+      schedule_render(bufnr)
+    end)
+    if img then
+      return image.virt_lines(img)
+    end
+    if st == "pending" then
+      return label("[image] " .. name .. " (converting...)")
+    end
+  end
+  if want_notes then
+    return label("[image] " .. name)
+  end
+  return nil
+end
+
+local function render(bufnr)
   if not vim.api.nvim_buf_is_valid(bufnr) then
     return
   end
   ns = ns or vim.api.nvim_create_namespace("notes_embeds")
   vim.api.nvim_buf_clear_namespace(bufnr, ns, 0, -1)
+  local want_notes, want_images = state.notes[bufnr], state.images[bufnr]
+  if not (want_notes or want_images) then
+    return
+  end
+  local win = vim.fn.bufwinid(bufnr)
+  if win == -1 then
+    return
+  end
+  local width = vim.api.nvim_win_get_width(win) - vim.fn.getwininfo(win)[1].textoff - 1
+  local c = cfg()
   local cur = vim.api.nvim_buf_get_name(bufnr)
-  local limit = cfg().embed_inline_lines
   local fence = false
   for i, line in ipairs(vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)) do
     if line:match("^%s*```") or line:match("^%s*~~~") then
       fence = not fence
-    elseif not fence then
-      local e = line:find("!%[") and M._find_embeds(line)[1]
+    elseif not fence and line:find("![", 1, true) then
+      local e = M._find_embeds(line)[1]
       if e then
-        local kind, virt = M._kind(e), nil
-        local path = kind ~= "url" and M._resolve(e, cur) or nil
-        if kind == "note" and path then
-          local body = M._note_lines(path, e.anchor) or {}
-          virt = { { { "| " .. vim.fn.fnamemodify(path, ":t:r") .. (e.anchor and (" > " .. e.anchor) or ""), "Title" } } }
-          for k = 1, math.min(#body, limit) do
-            virt[#virt + 1] = { { "| " .. body[k], "Comment" } }
-          end
-          if #body > limit then
-            virt[#virt + 1] = { { ("| ... (+%d more lines)"):format(#body - limit), "NonText" } }
-          end
-        elseif kind == "image" and path then
-          virt = { { { "| [image] " .. vim.fn.fnamemodify(path, ":t"), "Comment" } } }
-        elseif kind ~= "url" and not path then
-          virt = { { { "| not found: " .. e.target, "WarningMsg" } } }
-        end
+        local virt = embed_virt(bufnr, e, cur, want_notes, want_images, width, c)
         if virt then
           vim.api.nvim_buf_set_extmark(bufnr, ns, i - 1, 0, { virt_lines = virt })
         end
@@ -519,37 +663,135 @@ local function render_inline(bufnr)
   end
 end
 
-function M.enable_inline(bufnr)
-  bufnr = (bufnr == nil or bufnr == 0) and vim.api.nvim_get_current_buf() or bufnr
-  inline[bufnr] = true
-  local g = vim.api.nvim_create_augroup("NotesEmbedInline" .. bufnr, { clear = true })
-  vim.api.nvim_create_autocmd({ "BufEnter", "BufWritePost", "TextChanged" }, {
-    group = g,
-    buffer = bufnr,
-    callback = function()
-      render_inline(bufnr)
-    end,
-  })
-  render_inline(bufnr)
+schedule_render = function(bufnr, delay)
+  local t = timers[bufnr]
+  if t and not t:is_closing() then
+    t:stop()
+    t:close()
+  end
+  t = vim.uv.new_timer()
+  timers[bufnr] = t
+  t:start(
+    delay or 120,
+    0,
+    vim.schedule_wrap(function()
+      if not t:is_closing() then
+        t:stop()
+        t:close()
+      end
+      if timers[bufnr] == t then
+        timers[bufnr] = nil
+      end
+      render(bufnr)
+    end)
+  )
 end
 
-function M.disable_inline(bufnr)
-  bufnr = (bufnr == nil or bufnr == 0) and vim.api.nvim_get_current_buf() or bufnr
-  inline[bufnr] = nil
-  pcall(vim.api.nvim_del_augroup_by_name, "NotesEmbedInline" .. bufnr)
-  if ns then
-    vim.api.nvim_buf_clear_namespace(bufnr, ns, 0, -1)
+local function sync(bufnr)
+  local name = "NotesEmbedInline" .. bufnr
+  if state.notes[bufnr] or state.images[bufnr] then
+    local g = vim.api.nvim_create_augroup(name, { clear = true })
+    vim.api.nvim_create_autocmd({ "BufEnter", "BufWinEnter", "BufWritePost", "TextChanged" }, {
+      group = g,
+      buffer = bufnr,
+      callback = function()
+        schedule_render(bufnr)
+      end,
+    })
+    vim.api.nvim_create_autocmd({ "WinResized", "VimResized" }, {
+      group = g,
+      callback = function()
+        schedule_render(bufnr)
+      end,
+    })
+    vim.api.nvim_create_autocmd("BufWipeout", {
+      group = g,
+      buffer = bufnr,
+      callback = function()
+        state.notes[bufnr], state.images[bufnr] = nil, nil
+      end,
+    })
+    schedule_render(bufnr, 0)
+  else
+    pcall(vim.api.nvim_del_augroup_by_name, name)
+    if ns and vim.api.nvim_buf_is_valid(bufnr) then
+      vim.api.nvim_buf_clear_namespace(bufnr, ns, 0, -1)
+    end
   end
 end
 
+local function cur_buf(bufnr)
+  return (bufnr == nil or bufnr == 0) and vim.api.nvim_get_current_buf() or bufnr
+end
+
+-- inline note embeds
+function M.enable_inline(bufnr)
+  bufnr = cur_buf(bufnr)
+  state.notes[bufnr] = true
+  sync(bufnr)
+end
+
+function M.disable_inline(bufnr)
+  bufnr = cur_buf(bufnr)
+  state.notes[bufnr] = nil
+  sync(bufnr)
+end
+
 function M.toggle_inline(bufnr)
-  bufnr = (bufnr == nil or bufnr == 0) and vim.api.nvim_get_current_buf() or bufnr
-  if inline[bufnr] then
+  bufnr = cur_buf(bufnr)
+  if state.notes[bufnr] then
     M.disable_inline(bufnr)
-    util.notify("inline embeds off")
+    util.notify("inline note embeds off")
   else
     M.enable_inline(bufnr)
-    util.notify("inline embeds on")
+    util.notify("inline note embeds on")
+  end
+end
+
+-- inline images
+function M.enable_images(bufnr)
+  bufnr = cur_buf(bufnr)
+  state.images[bufnr] = true
+  sync(bufnr)
+end
+
+function M.disable_images(bufnr)
+  bufnr = cur_buf(bufnr)
+  state.images[bufnr] = nil
+  sync(bufnr)
+end
+
+function M.toggle_images(bufnr)
+  bufnr = cur_buf(bufnr)
+  if state.images[bufnr] then
+    M.disable_images(bufnr)
+    util.notify("inline images off")
+    return
+  end
+  local ok, reason = image.capable()
+  if not ok then
+    util.notify("inline images unavailable: " .. reason, vim.log.levels.WARN)
+    return
+  end
+  M.enable_images(bufnr)
+  util.notify("inline images on")
+end
+
+--- Called for every markdown buffer: applies embed_inline / inline_images config.
+function M.auto_attach(bufnr)
+  local c = cfg()
+  if c.embed_inline then
+    M.enable_inline(bufnr)
+  end
+  local want = c.inline_images
+  if want == true or want == "auto" then
+    local ok, reason = image.capable()
+    if ok then
+      M.enable_images(bufnr)
+    elseif want == true and not warned then
+      warned = true
+      util.notify("inline images unavailable: " .. reason, vim.log.levels.WARN)
+    end
   end
 end
 

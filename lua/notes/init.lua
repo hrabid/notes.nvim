@@ -27,9 +27,20 @@ M.defaults = {
   outline_side = "right", -- "left" | "right"
 
   -- embeds: image backends are tried in order until one works
-  embed_backends = { "kitty", "chafa", "viu", "external" },
+  embed_backends = { "kitty", "kitty-direct", "chafa", "viu", "external" },
   embed_inline = false, -- render ![[note]] embeds as virtual lines automatically
   embed_inline_lines = 8, -- max lines shown per inline note embed
+
+  -- native images (kitty graphics protocol: Ghostty, kitty; also through tmux)
+  inline_images = "auto", -- true | false | "auto": render images below their ![[...]] line when supported
+  image_protocol = "auto", -- "auto" | "kitty" (skip terminal detection) | "none" (disable kitty-protocol features)
+  image_max_cols = 70,
+  image_max_rows = 22,
+  image_cell_ratio = 2.0, -- cell height / width in pixels; tweak if images look stretched
+
+  -- attachments (images, pdf, ...): searched after the direct path, before a vault-wide name search
+  attachment_dir = nil, -- string or list; relative to the vault root / note folders, or absolute
+  attachment_dirs = { "attachments", "assets", "static", "img", "images", "files", "media", "resources", "pics" },
 
   -- ui
   picker = "auto", -- "auto" | "telescope" | "fzf-lua" | "vim.ui.select"
@@ -46,6 +57,7 @@ local links = require("notes.links")
 local move = require("notes.move")
 local outline = require("notes.outline")
 local embed = require("notes.embed")
+local image = require("notes.image")
 local picker = require("notes.picker")
 local util = require("notes.util")
 
@@ -61,6 +73,15 @@ local function validate(c)
   enum("outline_side", { "left", "right" })
   if type(c.embed_backends) ~= "table" then
     c.embed_backends = M.defaults.embed_backends
+  end
+  enum("inline_images", { true, false, "auto" })
+  enum("image_protocol", { "auto", "kitty", "none" })
+  if type(c.attachment_dirs) ~= "table" then
+    c.attachment_dirs = M.defaults.attachment_dirs
+  end
+  if c.attachment_dir ~= nil and type(c.attachment_dir) ~= "string" and type(c.attachment_dir) ~= "table" then
+    util.notify("attachment_dir must be a string or a list; ignoring", vim.log.levels.WARN)
+    c.attachment_dir = nil
   end
   if type(c.link_stack_max) ~= "number" or c.link_stack_max < 1 then
     c.link_stack_max = M.defaults.link_stack_max
@@ -144,9 +165,7 @@ local function attach(bufnr)
   if vim.bo[bufnr].buftype ~= "" then
     return
   end
-  if M.config.embed_inline then
-    embed.enable_inline(bufnr)
-  end
+  embed.auto_attach(bufnr)
   if not M.config.keymaps then
     return
   end
@@ -173,7 +192,10 @@ local function attach(bufnr)
   map("<leader>me", embed.preview, "preview embed")
   map("<leader>mE", function()
     embed.toggle_inline(bufnr)
-  end, "toggle inline embeds")
+  end, "toggle inline note embeds")
+  map("<leader>mi", function()
+    embed.toggle_images(bufnr)
+  end, "toggle inline images")
   map("<leader>mm", guard(function()
     move.pick(bufnr)
   end), "move note")
@@ -214,6 +236,12 @@ function M.setup(opts)
   vim.api.nvim_create_user_command("NoteEmbedInline", function()
     embed.toggle_inline()
   end, { desc = "Toggle inline note embeds" })
+  vim.api.nvim_create_user_command("NoteImageToggle", function()
+    embed.toggle_images()
+  end, { desc = "Toggle inline images in this buffer" })
+  vim.api.nvim_create_user_command("NoteImageStatus", function()
+    print(table.concat(image.status(), "\n"))
+  end, { desc = "Show image rendering capabilities" })
   vim.api.nvim_create_user_command("NoteMove", function(o)
     local buf = vim.api.nvim_get_current_buf()
     if o.args ~= "" then

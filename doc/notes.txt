@@ -19,9 +19,16 @@ SETUP                                                          *notes-setup*
       link_stack_max    = 50,
       outline_width     = 36,
       outline_side      = "right",
-      embed_backends    = { "kitty", "chafa", "viu", "external" },
+      embed_backends    = { "kitty", "kitty-direct", "chafa", "viu", "external" },
+      inline_images     = "auto",
+      image_protocol    = "auto",
+      image_max_cols    = 70,
+      image_max_rows    = 22,
+      image_cell_ratio  = 2.0,
       embed_inline      = false,
       embed_inline_lines = 8,
+      attachment_dir    = nil,
+      attachment_dirs   = { "attachments", "assets", "static", "img", "images", "files", "media", "resources", "pics" },
       picker            = "auto",
       keymaps           = true,
     })
@@ -39,6 +46,8 @@ COMMANDS                                                    *notes-commands*
 :NoteOutlineToggle       Toggle the outline sidebar.
 :NoteEmbedPreview        Preview the embed under the cursor.
 :NoteEmbedInline         Toggle inline note embeds.
+:NoteImageToggle         Toggle inline images in this buffer.
+:NoteImageStatus         Show image rendering capabilities.
 
 ==============================================================================
 KEYMAPS                                                      *notes-keymaps*
@@ -52,6 +61,7 @@ KEYMAPS                                                      *notes-keymaps*
 <leader>mO   Outline sidebar
 <leader>me   Preview embed under cursor
 <leader>mE   Toggle inline note embeds
+<leader>mi   Toggle inline images
 <leader>mb   Back through followed links
 <leader>mr   Reload templates
 <leader>mv   Print vault root

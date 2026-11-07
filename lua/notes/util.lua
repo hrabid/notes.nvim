@@ -167,23 +167,25 @@ function M.list_dirs_recursive(root)
   return out
 end
 
-local function find_walk(dir, rel, name, depth)
+local function find_walk(dir, rel, name, depth, icase)
   if depth > 20 then
     return nil
   end
+  local want = icase and name:lower() or name
   local subdirs = {}
   for entry, t in vim.fs.dir(dir) do
     if entry:sub(1, 1) ~= "." then
       local r = rel == "" and entry or (rel .. "/" .. entry)
-      if t == "file" and (r == name or r:sub(-(#name + 1)) == "/" .. name) then
+      local cmp = icase and r:lower() or r
+      if (t == "file" or t == "link") and (cmp == want or cmp:sub(-(#want + 1)) == "/" .. want) then
         return dir .. "/" .. entry
       elseif t == "directory" then
         subdirs[#subdirs + 1] = { dir .. "/" .. entry, r }
       end
     end
   end
-  for _, s in ipairs(subdirs) do
-    local f = find_walk(s[1], s[2], name, depth + 1)
+  for _, sd in ipairs(subdirs) do
+    local f = find_walk(sd[1], sd[2], name, depth + 1, icase)
     if f then
       return f
     end
@@ -192,8 +194,8 @@ local function find_walk(dir, rel, name, depth)
 end
 
 --- First file under root whose relative path equals / ends with `name` (shallowest first).
-function M.find_file(root, name)
-  return find_walk(root, "", name, 0)
+function M.find_file(root, name, icase)
+  return find_walk(root, "", name, 0, icase)
 end
 
 --- All .md files under root (relative paths, hidden dirs skipped).
