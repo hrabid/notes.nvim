@@ -17,6 +17,11 @@ SETUP                                                          *notes-setup*
       link_display      = "filename",
       wikilinks         = false,
       link_stack_max    = 50,
+      outline_width     = 36,
+      outline_side      = "right",
+      embed_backends    = { "kitty", "chafa", "viu", "external" },
+      embed_inline      = false,
+      embed_inline_lines = 8,
       picker            = "auto",
       keymaps           = true,
     })
@@ -30,6 +35,10 @@ COMMANDS                                                    *notes-commands*
 :NotesVault              Print the detected vault root.
 :NoteNew [name]          Create a note in new_note_dir.
 :NoteMove [dir]          Move the current note to dir (picker if omitted).
+:NoteOutline [maxlevel]  Heading outline picker for the current buffer.
+:NoteOutlineToggle       Toggle the outline sidebar.
+:NoteEmbedPreview        Preview the embed under the cursor.
+:NoteEmbedInline         Toggle inline note embeds.
 
 ==============================================================================
 KEYMAPS                                                      *notes-keymaps*
@@ -39,6 +48,10 @@ KEYMAPS                                                      *notes-keymaps*
 <leader>mh   Link a header (file, then header)
 <leader>mn   New note (global)
 <leader>mm   Move note to another directory
+<leader>mo   Outline picker
+<leader>mO   Outline sidebar
+<leader>me   Preview embed under cursor
+<leader>mE   Toggle inline note embeds
 <leader>mb   Back through followed links
 <leader>mr   Reload templates
 <leader>mv   Print vault root

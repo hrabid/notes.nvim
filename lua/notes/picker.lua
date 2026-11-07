@@ -47,6 +47,35 @@ local function detect()
   return cached
 end
 
+-- telescope previewer for items carrying { bufnr, lnum }
+local function item_previewer(previewers)
+  local ns = vim.api.nvim_create_namespace("notes_preview")
+  return previewers.new_buffer_previewer({
+    title = "Preview",
+    define_preview = function(self, entry)
+      local it = entry.value
+      local lines
+      if type(it) == "table" and it.bufnr and vim.api.nvim_buf_is_valid(it.bufnr) then
+        lines = vim.api.nvim_buf_get_lines(it.bufnr, 0, -1, false)
+      end
+      lines = lines or {}
+      local pbuf = self.state.bufnr
+      vim.api.nvim_buf_set_lines(pbuf, 0, -1, false, lines)
+      vim.bo[pbuf].filetype = "markdown"
+      if type(it) == "table" and it.lnum and it.lnum <= #lines then
+        vim.api.nvim_buf_clear_namespace(pbuf, ns, 0, -1)
+        vim.api.nvim_buf_set_extmark(pbuf, ns, it.lnum - 1, 0, { line_hl_group = "Visual" })
+        pcall(function()
+          vim.api.nvim_win_set_cursor(self.state.winid, { it.lnum, 0 })
+          vim.api.nvim_win_call(self.state.winid, function()
+            vim.cmd("normal! zt")
+          end)
+        end)
+      end
+    end,
+  })
+end
+
 local backends = {}
 
 function backends.telescope(items, opts, cb)
@@ -55,6 +84,7 @@ function backends.telescope(items, opts, cb)
   local conf = require("telescope.config").values
   local actions = require("telescope.actions")
   local action_state = require("telescope.actions.state")
+  local previewers = require("telescope.previewers")
 
   pickers
     .new({}, {
@@ -67,6 +97,7 @@ function backends.telescope(items, opts, cb)
         end,
       }),
       sorter = conf.generic_sorter({}),
+      previewer = opts.preview and item_previewer(previewers) or nil,
       attach_mappings = function(prompt_bufnr)
         actions.select_default:replace(function()
           local sel = action_state.get_selected_entry()

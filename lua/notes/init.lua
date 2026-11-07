@@ -22,6 +22,15 @@ M.defaults = {
   wikilinks = false,
   link_stack_max = 50,
 
+  -- outline sidebar
+  outline_width = 36,
+  outline_side = "right", -- "left" | "right"
+
+  -- embeds: image backends are tried in order until one works
+  embed_backends = { "kitty", "chafa", "viu", "external" },
+  embed_inline = false, -- render ![[note]] embeds as virtual lines automatically
+  embed_inline_lines = 8, -- max lines shown per inline note embed
+
   -- ui
   picker = "auto", -- "auto" | "telescope" | "fzf-lua" | "vim.ui.select"
   float_border = "rounded",
@@ -35,6 +44,8 @@ local vault = require("notes.vault")
 local template = require("notes.template")
 local links = require("notes.links")
 local move = require("notes.move")
+local outline = require("notes.outline")
+local embed = require("notes.embed")
 local picker = require("notes.picker")
 local util = require("notes.util")
 
@@ -47,6 +58,10 @@ local function validate(c)
   end
   enum("link_display", { "filename", "title" })
   enum("picker", { "auto", "telescope", "fzf-lua", "vim.ui.select" })
+  enum("outline_side", { "left", "right" })
+  if type(c.embed_backends) ~= "table" then
+    c.embed_backends = M.defaults.embed_backends
+  end
   if type(c.link_stack_max) ~= "number" or c.link_stack_max < 1 then
     c.link_stack_max = M.defaults.link_stack_max
   end
@@ -126,6 +141,12 @@ local function show_vault()
 end
 
 local function attach(bufnr)
+  if vim.bo[bufnr].buftype ~= "" then
+    return
+  end
+  if M.config.embed_inline then
+    embed.enable_inline(bufnr)
+  end
   if not M.config.keymaps then
     return
   end
@@ -145,6 +166,14 @@ local function attach(bufnr)
     links.insert_header_link(bufnr)
   end), "link header")
   map("<leader>mb", guard(links.go_back), "go back")
+  map("<leader>mo", function()
+    outline.open(bufnr)
+  end, "outline picker")
+  map("<leader>mO", outline.toggle, "outline sidebar")
+  map("<leader>me", embed.preview, "preview embed")
+  map("<leader>mE", function()
+    embed.toggle_inline(bufnr)
+  end, "toggle inline embeds")
   map("<leader>mm", guard(function()
     move.pick(bufnr)
   end), "move note")
@@ -177,6 +206,14 @@ function M.setup(opts)
   vim.api.nvim_create_user_command("NoteNew", function(o)
     M.new_note(o.args)
   end, { nargs = "?", desc = "Create a note in new_note_dir" })
+  vim.api.nvim_create_user_command("NoteOutline", function(o)
+    outline.open(nil, tonumber(o.args))
+  end, { nargs = "?", desc = "Heading outline picker (optional max level)" })
+  vim.api.nvim_create_user_command("NoteOutlineToggle", outline.toggle, { desc = "Toggle the outline sidebar" })
+  vim.api.nvim_create_user_command("NoteEmbedPreview", embed.preview, { desc = "Preview the embed under the cursor" })
+  vim.api.nvim_create_user_command("NoteEmbedInline", function()
+    embed.toggle_inline()
+  end, { desc = "Toggle inline note embeds" })
   vim.api.nvim_create_user_command("NoteMove", function(o)
     local buf = vim.api.nvim_get_current_buf()
     if o.args ~= "" then
