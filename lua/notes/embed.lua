@@ -1,6 +1,6 @@
 -- notes.nvim: embeds: ![[note]], ![[note#heading]], ![[img.png]], ![](img.png)
 --
--- Preview (<leader>me): notes in a float; images through an ordered fallback chain
+-- Preview (<leader>mp): notes in a float; images through an ordered fallback chain
 -- (config.embed_backends, first one that works wins):
 --   "kitty"        Unicode-placeholder image in a float   (Ghostty, kitty; works in tmux)
 --   "kitty-direct" cursor-positioned kitty protocol        (WezTerm etc.; no tmux/ssh)
@@ -90,9 +90,8 @@ function M._pick_embed(embeds, col)
   return embeds[1]
 end
 
---- Ref under the cursor column (0-based). mode "key": else first embed, else first ref;
---- mode "mouse": else first embed on the line, else nil.
-function M._pick_ref(refs, col, mode)
+--- Ref under the cursor column (0-based); else the first embed on the line, else the first ref.
+function M._pick_ref(refs, col)
   local c = col + 1
   for _, r in ipairs(refs) do
     if c >= r.s and c <= r.e then
@@ -104,10 +103,7 @@ function M._pick_ref(refs, col, mode)
       return r
     end
   end
-  if mode ~= "mouse" then
-    return refs[1]
-  end
-  return nil
+  return refs[1]
 end
 
 function M._kind(e)
@@ -452,7 +448,7 @@ local function open_win(buf, w, h, border, title, focusable)
   return vim.api.nvim_open_win(buf, false, conf)
 end
 
--- second <leader>me on a note preview: move into the float to scroll/read it
+-- second <leader>mp on a note preview: move into the float to scroll/read it
 local function focus_float()
   local f = float
   if f.aug then
@@ -658,29 +654,23 @@ local function attempt(path, idx)
   end
 end
 
--- ── public: preview under cursor / mouse ────────────────────────────
+-- ── public: preview under cursor ──────────────────────────────────
 
 --- Preview the link or embed under the cursor.
 --- Esc/q close it, <CR> opens a previewed note, <C-d>/<C-u> scroll it.
-function M.preview(opts)
-  opts = opts or {}
+function M.preview()
   if float and vim.api.nvim_win_is_valid(float.win) then
-    if not opts.replace then
-      if float.focusable then
-        focus_float()
-      else
-        close_float()
-      end
-      return
+    if float.focusable then
+      focus_float()
+    else
+      close_float()
     end
-    close_float()
+    return
   end
   local refs = M._find_refs(vim.api.nvim_get_current_line())
-  local e = M._pick_ref(refs, vim.api.nvim_win_get_cursor(0)[2], opts.mouse and "mouse" or "key")
+  local e = M._pick_ref(refs, vim.api.nvim_win_get_cursor(0)[2])
   if not e then
-    if not opts.mouse then
-      util.notify("no link or embed on this line")
-    end
+    util.notify("no link or embed on this line")
     return
   end
   local kind = M._kind(e)
@@ -712,20 +702,6 @@ function M.preview(opts)
   else
     vim.ui.open(path)
   end
-end
-
---- <C-LeftMouse>: preview the link/embed that was clicked (needs 'mouse' enabled).
-function M.preview_mouse()
-  local m = vim.fn.getmousepos()
-  if m.winid == 0 or m.line == 0 or (float and m.winid == float.win) then
-    return
-  end
-  local buf = vim.api.nvim_win_get_buf(m.winid)
-  local line = vim.api.nvim_buf_get_lines(buf, m.line - 1, m.line, false)[1] or ""
-  vim.api.nvim_set_current_win(m.winid)
-  local col = math.min(math.max(m.column - 1, 0), math.max(#line - 1, 0))
-  pcall(vim.api.nvim_win_set_cursor, m.winid, { m.line, col })
-  M.preview({ mouse = true, replace = true })
 end
 
 -- ── inline rendering (notes as virtual lines, images as placeholders) ─

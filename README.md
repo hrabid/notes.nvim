@@ -37,8 +37,7 @@ Variables: `{{date}} {{time}} {{datetime}} {{filename}} {{title}} {{uuid}} {{cur
 | `<leader>mm` | move current note to another directory (picker) |
 | `<leader>mo` | outline picker for the buffer (telescope preview), jump to heading |
 | `<leader>mO` | toggle outline sidebar |
-| `<leader>me` | preview the link/embed under the cursor (note / image) |
-| `<C-LeftMouse>` | ctrl+click a link/embed to preview it (needs `mouse` enabled) |
+| `<leader>mp` | preview the link/embed under the cursor (note / image) |
 | `<leader>mE` | toggle inline note embeds (virtual lines) |
 | `<leader>mi` | toggle inline images for this buffer |
 | `<leader>mb` | back through link-follow history         |
@@ -51,7 +50,7 @@ Variables: `{{date}} {{time}} {{datetime}} {{filename}} {{title}} {{uuid}} {{cur
 
 ## Commands
 
-`:TemplateInsert [name]`, `:TemplateReload`, `:NotesVault`, `:NoteNew [name]`, `:NoteMove [dir]`, `:NoteOutline [maxlevel]`, `:NoteOutlineToggle`, `:NoteEmbedPreview`, `:NoteEmbedInline`, `:NoteImageToggle`, `:NoteImageStatus`
+`:TemplateInsert [name]`, `:TemplateReload`, `:NotesVault`, `:NoteNew [name]`, `:NoteMove [dir]`, `:NoteOutline [maxlevel]`, `:NoteOutlineToggle`, `:NotePreview`, `:NoteEmbedInline`, `:NoteImageToggle`, `:NoteImageStatus`
 
 ## Outline sidebar (`<leader>mO`)
 
@@ -72,15 +71,14 @@ Keys inside the sidebar:
 
 ## Embeds
 
-`<leader>me` (or ctrl+click) previews the link or embed under the cursor (or the embed on the line):
+`<leader>mp` previews the link or embed under the cursor (or the embed on the line):
 `![[note]]`, `![[note#heading]]`, `![alt](note.md)`, `![[img.png]]`, `![alt](img.png)`.
 Plain links work too: `[text](note.md#heading)`, `[[note]]`, `[pic](img.png)`, `[x](#heading)`.
 
 The preview stays until you dismiss it: `Esc` / `q` close it, `Enter` opens the previewed note in the current window
 (markdown only; `<leader>mb` returns, and the heading is jumped to), `<C-d>` / `<C-u>` scroll long notes.
-Pressing `<leader>me` again moves into the float; ctrl+clicking another link replaces it. The keys are temporary
+Pressing `<leader>mp` again moves into the float. The keys are temporary
 buffer-local mappings; your own buffer-local `Esc`/`q`/`Enter` mappings come back when the preview closes.
-Ctrl+click needs `set mouse=a` (and `set -g mouse on` in tmux); hold shift if the terminal grabs the click.
 Note embeds are rendered inline as virtual lines by default, just like images (`embed_inline = false` to disable, `<leader>mE` toggles per buffer).
 
 Images try `embed_backends` in order until one works (default `{ "kitty", "kitty-direct", "chafa", "viu", "external" }`):
@@ -106,7 +104,7 @@ detected automatically; `:NoteImageStatus` tells you what was found and why some
 - Sizing: `image_max_cols`, `image_max_rows`; if images look stretched change `image_cell_ratio`
   (cell height / width in pixels, ~2).
 - `<leader>mi` toggles it per buffer, `inline_images = false` turns it off, `true` warns when unavailable.
-- Not supported (WezTerm, foot, alacritty, ...): nothing is drawn inline; `<leader>me` falls back through
+- Not supported (WezTerm, foot, alacritty, ...): nothing is drawn inline; `<leader>mp` falls back through
   `embed_backends` (direct kitty placement, chafa, viu, external viewer).
 
 ### tmux

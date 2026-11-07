@@ -44,7 +44,7 @@ COMMANDS                                                    *notes-commands*
 :NoteMove [dir]          Move the current note to dir (picker if omitted).
 :NoteOutline [maxlevel]  Heading outline picker for the current buffer.
 :NoteOutlineToggle       Toggle the outline sidebar.
-:NoteEmbedPreview        Preview the embed under the cursor.
+:NotePreview             Preview the link/embed under the cursor.
 :NoteEmbedInline         Toggle inline note embeds.
 :NoteImageToggle         Toggle inline images in this buffer.
 :NoteImageStatus         Show image rendering capabilities.
@@ -59,7 +59,7 @@ KEYMAPS                                                      *notes-keymaps*
 <leader>mm   Move note to another directory
 <leader>mo   Outline picker
 <leader>mO   Outline sidebar
-<leader>me   Preview link/embed under cursor (also <C-LeftMouse>)
+<leader>mp   Preview link/embed under cursor
 <leader>mE   Toggle inline note embeds
 <leader>mi   Toggle inline images
 <leader>mb   Back through followed links
