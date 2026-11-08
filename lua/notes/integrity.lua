@@ -32,84 +32,7 @@ function M.build_index(root)
   return index.build(root)
 end
 
-local function rank(rel, attset)
-  local segs = vim.split(rel, "/", { plain = true })
-  local in_att = 1
-  for i = 1, #segs - 1 do
-    if attset[segs[i]:lower()] then
-      in_att = 0
-      break
-    end
-  end
-  return in_att, #segs
-end
-
-local function best(matches, attset)
-  table.sort(matches, function(a, b)
-    local a1, a2 = rank(a, attset)
-    local b1, b2 = rank(b, attset)
-    if a1 ~= b1 then
-      return a1 < b1
-    end
-    if a2 ~= b2 then
-      return a2 < b2
-    end
-    return a < b
-  end)
-  return matches[1]
-end
-
---- Absolute target of `ref` (as seen from file `source_abs`), plus how it was found
---- ("direct" | "search"); nil when it does not resolve.
-function M._resolve(idx, ref, source_abs)
-  local root = idx.root
-  local dir = vim.fs.dirname(source_abs)
-  local names = { ref.path }
-  if not ref.path:match("%.%w+$") then
-    names[#names + 1] = ref.path .. ".md"
-  end
-  local bases = ref.wiki and { root, dir } or { dir, root }
-
-  for _, name in ipairs(names) do
-    if name:sub(1, 1) == "/" then
-      local c = root .. name
-      if idx.set[c] then
-        return c, "direct"
-      end
-    else
-      for _, b in ipairs(bases) do
-        local c = vim.fs.normalize(b .. "/" .. name)
-        if idx.set[c] then
-          return c, "direct"
-        end
-      end
-    end
-  end
-
-  for _, icase in ipairs({ false, true }) do
-    for _, name in ipairs(names) do
-      local want = (name:gsub("^/", ""))
-      local base = vim.fs.basename(want)
-      local list = icase and idx.by_lname[base:lower()] or idx.by_name[base]
-      if list then
-        if icase then
-          want = want:lower()
-        end
-        local matches = {}
-        for _, rel in ipairs(list) do
-          local cmp = icase and rel:lower() or rel
-          if cmp == want or cmp:sub(-(#want + 1)) == "/" .. want then
-            matches[#matches + 1] = rel
-          end
-        end
-        if #matches > 0 then
-          return root .. "/" .. best(matches, idx.attset), "search"
-        end
-      end
-    end
-  end
-  return nil
-end
+M._resolve = index.resolve
 
 -- ── reading files (open buffers win over disk) ───────────────────────
 
@@ -191,6 +114,14 @@ function M._rewrite(r, ctx)
     local new = fit("/" .. rel_to_root(ctx.new_target))
     return new ~= orig and encode(new) or nil
   end
+  if ctx.shortest and ctx.unique_after and not orig:find("/", 1, true) then
+    -- name-only link ("shortest path" style): it keeps working wherever the file goes
+    if not target_changed then
+      return nil
+    end
+    local new = fit(vim.fs.basename(ctx.new_target))
+    return new ~= orig and encode(new) or nil
+  end
   if ctx.how == "search" and not target_changed then
     return nil -- found by name; still found after the move
   end
@@ -215,6 +146,7 @@ function M.plan_move(old, new)
   local idx = index.get(root)
   local loaded = loaded_buffers()
   local plan = { edits = {}, links = 0, files = 0 }
+  local shortest = cfg().link_path == "shortest"
   for _, rel in ipairs(idx.md) do
     local abs = root .. "/" .. rel
     if not template.is_template_path(abs) then
@@ -232,6 +164,11 @@ function M.plan_move(old, new)
                 old_target = target,
                 new_target = (target == old) and new or target,
                 how = how,
+                shortest = shortest,
+                unique_after = (function()
+                  local list = idx.by_name[vim.fs.basename((target == old) and new or target)]
+                  return not list or #list <= 1
+                end)(),
               })
               if text then
                 local list = plan.edits[abs]

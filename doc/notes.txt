@@ -18,13 +18,8 @@ SETUP                                                          *notes-setup*
       wikilinks         = false,
       link_stack_max    = 50,
       update_links      = "ask",
-      daily_dir         = "daily",
-      daily_format      = "%Y-%m-%d",
-      daily_template    = nil,
-      weekly_dir        = "weekly",
-      weekly_format     = "%G-W%V",
-      weekly_template   = nil,
-      paste_link_style  = "markdown",
+      embed_style       = "markdown",
+      link_path         = "shortest",
       paste_name        = "ask",
       toc_min_level     = 1,
       toc_max_level     = 3,
@@ -58,9 +53,7 @@ COMMANDS                                                    *notes-commands*
 :NoteRename [name]       Rename the current note; links are updated.
 :NoteBacklinks           Notes that link to the current note.
 :NoteCheck [file]        Broken links / missing headings -> quickfix.
-:NoteDaily [offset|date]  Open a daily note.
-:NoteWeekly [offset|date] Open a weekly note.
-:NoteNext / :NotePrev    Step through daily/weekly notes.
+:NoteEmbed              Embed a note/image/pdf/attachment at the cursor.
 :NotePasteImage [name]   Save the clipboard image and link it.
 :NoteSearch [text]       Search the vault's text.
 :NoteTags [tag]          Browse tags.
@@ -89,8 +82,7 @@ KEYMAPS                                                      *notes-keymaps*
 <leader>mR   Rename note
 <leader>mk   Backlinks
 <leader>mc   Check links
-<leader>md   Daily note       <leader>mw   Weekly note
-<leader>m> / <  Next / previous daily or weekly note
+<leader>me   Embed a note / image / pdf / attachment
 <leader>mP   Paste clipboard image
 <leader>ms   Search vault     <leader>mT   Tags      <leader>mF   Properties
 <leader>mC   Table of contents

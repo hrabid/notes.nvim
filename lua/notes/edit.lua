@@ -6,6 +6,7 @@ local links = require("notes.links")
 local integrity = require("notes.integrity")
 local index = require("notes.index")
 local parse = require("notes.parse")
+local files = require("notes.files")
 
 local M = {}
 
@@ -37,7 +38,7 @@ function M._convert_ref(ref, to, ctx)
     end
     local rel = ""
     if ref.path ~= "" then
-      rel = util.relative_path(vim.fs.dirname(note), abs):gsub(" ", "%%20")
+      rel = files.target_path(abs, { idx = idx, root = idx.root, note_abs = note, path_style = require("notes").config.link_path }):gsub(" ", "%%20")
     end
     local anchor = ref.anchor and ("#" .. util.generate_anchor(ref.anchor:match("[^#]*$"))) or ""
     local text

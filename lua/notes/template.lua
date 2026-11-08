@@ -22,15 +22,6 @@ function M.is_template_path(path)
   return d ~= nil and path:sub(1, #d + 1) == d .. "/"
 end
 
---- Paths whose BufNewFile auto-inject must be skipped (value false) - set by capture.lua.
-M.forced = {}
-
-function M.take_forced(path)
-  local v = M.forced[path]
-  M.forced[path] = nil
-  return v
-end
-
 --- {{prompt:Label}} / {{prompt:Label|default}} placeholders, in order, unique by label.
 function M._prompts(content)
   local out, seen = {}, {}

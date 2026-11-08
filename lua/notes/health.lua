@@ -10,7 +10,7 @@ function M.check()
   else
     h.error("Neovim >= 0.10 is required")
   end
-  if vim.fn.exists(":NoteDaily") == 2 then
+  if vim.fn.exists(":NoteSearch") == 2 then
     h.ok("setup() was called (commands are registered)")
   else
     h.error("commands are missing: call require('notes').setup()")
@@ -52,6 +52,9 @@ function M.check()
   h.start("notes.nvim: images")
   for _, l in ipairs(require("notes.image").status()) do
     h.info(l)
+  end
+  if not require("notes.image").converter_name("jpg") then
+    h.warn("only PNG images can be rendered inline: install ImageMagick, libvips or ffmpeg to convert jpg/gif/webp/...")
   end
   if vim.fn.executable("pdftoppm") == 0 and vim.fn.executable("mutool") == 0 then
     h.info("no pdftoppm/mutool: PDF first-page previews need poppler or mupdf (or ImageMagick + ghostscript)")

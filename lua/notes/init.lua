@@ -24,13 +24,8 @@ M.defaults = {
   update_links = "ask", -- "ask" | true | false: rewrite links when a note is moved/renamed
 
   -- capture
-  daily_dir = "daily", -- relative to the vault root, or absolute
-  daily_format = "%Y-%m-%d",
-  daily_template = nil, -- template name for new daily notes (nil = empty note)
-  weekly_dir = "weekly",
-  weekly_format = "%G-W%V", -- ISO week
-  weekly_template = nil,
-  paste_link_style = "markdown", -- "markdown" | "wiki": link inserted by image paste
+  embed_style = "markdown", -- "markdown" | "wiki": style of embeds from <leader>me and pasted images
+  link_path = "shortest", -- "shortest" (file name when unique, like Obsidian) | "relative" (../dir/file.ext)
   paste_name = "ask", -- "ask" | "auto": prompt for the pasted image's name
 
   -- housekeeping
@@ -102,7 +97,8 @@ local function validate(c)
   end
   enum("inline_images", { true, false, "auto" })
   enum("update_links", { "ask", true, false })
-  enum("paste_link_style", { "markdown", "wiki" })
+  enum("embed_style", { "markdown", "wiki" })
+  enum("link_path", { "shortest", "relative" })
   enum("paste_name", { "ask", "auto" })
   enum("image_protocol", { "auto", "kitty", "none" })
   if type(c.attachment_dirs) ~= "table" then
@@ -234,15 +230,12 @@ local function attach(bufnr)
     move.rename(bufnr)
   end), "rename note")
   map("<leader>mk", guard(integrity.backlinks), "backlinks")
-  map("<leader>m>", guard(function()
-    capture.step(1)
-  end), "next daily/weekly note")
-  map("<leader>m<", guard(function()
-    capture.step(-1)
-  end), "previous daily/weekly note")
   map("<leader>mP", guard(function()
     capture.paste_image()
   end), "paste image from clipboard")
+  map("<leader>me", guard(function()
+    capture.embed()
+  end), "embed a note / image / pdf / attachment")
   map("<leader>mC", function()
     nav.toc()
   end, "table of contents")
@@ -341,18 +334,9 @@ function M.setup(opts)
   vim.api.nvim_create_user_command("NoteImageStatus", function()
     print(table.concat(image.status(), "\n"))
   end, { desc = "Show image rendering capabilities" })
-  vim.api.nvim_create_user_command("NoteDaily", function(o)
-    capture.daily(o.args)
-  end, { nargs = "?", desc = "Open a daily note: today, +/-N days or YYYY-MM-DD" })
-  vim.api.nvim_create_user_command("NoteWeekly", function(o)
-    capture.weekly(o.args)
-  end, { nargs = "?", desc = "Open a weekly note: this week, +/-N weeks or a date" })
-  vim.api.nvim_create_user_command("NoteNext", function()
-    capture.step(1)
-  end, { desc = "Next daily/weekly note" })
-  vim.api.nvim_create_user_command("NotePrev", function()
-    capture.step(-1)
-  end, { desc = "Previous daily/weekly note" })
+  vim.api.nvim_create_user_command("NoteEmbed", function()
+    capture.embed()
+  end, { desc = "Embed a note / image / pdf / attachment at the cursor" })
   vim.api.nvim_create_user_command("NotePasteImage", function(o)
     capture.paste_image(o.args)
   end, { nargs = "?", desc = "Save the clipboard image into the vault and link it" })
@@ -444,12 +428,6 @@ function M.setup(opts)
     vim.keymap.set("n", "<leader>mn", function()
       M.new_note()
     end, { desc = "Notes: new note" })
-    vim.keymap.set("n", "<leader>md", function()
-      capture.daily()
-    end, { desc = "Notes: today's daily note" })
-    vim.keymap.set("n", "<leader>mw", function()
-      capture.weekly()
-    end, { desc = "Notes: this week's note" })
     vim.keymap.set("n", "<leader>ms", function()
       search.text()
     end, { desc = "Notes: search vault" })
@@ -470,13 +448,10 @@ function M.setup(opts)
     group = group,
     pattern = "*.md",
     callback = function(args)
-      local path = vim.api.nvim_buf_get_name(args.buf)
-      if template.take_forced(util.expand_path(path)) ~= nil then
-        return -- capture.lua applies its own template
-      end
       if not M.config.auto_inject then
         return
       end
+      local path = vim.api.nvim_buf_get_name(args.buf)
       if not vault.is_in_vault(path) or template.is_template_path(path) then
         return
       end

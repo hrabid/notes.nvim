@@ -4,6 +4,7 @@ local util = require("notes.util")
 local vault = require("notes.vault")
 local index = require("notes.index")
 local integrity = require("notes.integrity")
+local files = require("notes.files")
 
 local M = {}
 
@@ -71,8 +72,7 @@ function M._items(ctx, env)
     end
   elseif ctx.kind == "md_path" then
     for _, rel in ipairs(candidate_files(idx, env.skip)) do
-      local from = note ~= "" and vim.fs.dirname(note) or idx.root
-      local rp = util.relative_path(from, idx.root .. "/" .. rel)
+      local rp = files.target_path(idx.root .. "/" .. rel, { idx = idx, root = idx.root, note_abs = note, path_style = env.link_path })
       items[#items + 1] = { label = rp, insert = (rp:gsub(" ", "%%20")), detail = rel, kind = "file" }
     end
   elseif ctx.kind == "wiki_heading" or ctx.kind == "md_heading" then
@@ -147,6 +147,7 @@ function M.items_at_cursor()
   local raw = M._items(ctx, {
     idx = idx,
     note_abs = util.expand_path(vim.api.nvim_buf_get_name(0)),
+    link_path = require("notes").config.link_path,
     skip = require("notes.template").is_template_path, -- the templates folder is not link material
     headings = function(abs)
       local d = index.data(abs, loaded)

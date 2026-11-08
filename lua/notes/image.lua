@@ -257,6 +257,9 @@ end
 
 function M.reset_cache()
   cap = nil
+  if M._clear_failures then
+    M._clear_failures()
+  end
 end
 
 --- Direct (cursor-positioned) kitty placement: no tmux/ssh; kitty, Ghostty, WezTerm.
@@ -286,30 +289,108 @@ local function png_cache_path(path)
   return dir .. "/" .. vim.fn.sha256(path .. (st and st.mtime.sec or 0) .. (st and st.size or 0)) .. ".png"
 end
 
-local function converter_argv(path, out)
-  local ext = (path:match("%.(%w+)$") or ""):lower()
-  if ext == "pdf" then -- first page
-    if exe("pdftoppm") then
-      return { "pdftoppm", "-png", "-f", "1", "-l", "1", "-r", "110", "-singlefile", path, (out:gsub("%.png$", "")) }
+--- Is `name` usable? ("pil" = python3 with Pillow). Replaceable in tests.
+function M._has(name)
+  if name == "pil" then
+    if M._pil == nil then
+      M._pil = false
+      if vim.fn.executable("python3") == 1 then
+        local ok, res = pcall(function()
+          return vim.system({ "python3", "-c", "import PIL" }):wait(3000)
+        end)
+        M._pil = ok and res ~= nil and res.code == 0
+      end
     end
-    if exe("mutool") then
-      return { "mutool", "draw", "-r", "110", "-o", out, path, "1" }
+    return M._pil
+  end
+  return vim.fn.executable(name) == 1
+end
+
+local function exe(name)
+  return M._has(name)
+end
+
+local PIL_CODE = "import sys\nfrom PIL import Image\nim = Image.open(sys.argv[1])\nim.seek(0)\nim.convert('RGBA').save(sys.argv[2], 'PNG')"
+
+local BUILD = {
+  pdftoppm = function(i, o)
+    return { "pdftoppm", "-png", "-f", "1", "-l", "1", "-r", "110", "-singlefile", i, (o:gsub("%.png$", "")) }
+  end,
+  mutool = function(i, o)
+    return { "mutool", "draw", "-r", "110", "-o", o, i, "1" }
+  end,
+  gs = function(i, o)
+    return { "gs", "-q", "-dNOPAUSE", "-dBATCH", "-dSAFER", "-sDEVICE=png16m", "-r110", "-dFirstPage=1", "-dLastPage=1", "-sOutputFile=" .. o, i }
+  end,
+  ["rsvg-convert"] = function(i, o)
+    return { "rsvg-convert", "-w", "1600", "-o", o, i }
+  end,
+  inkscape = function(i, o)
+    return { "inkscape", i, "--export-type=png", "--export-filename=" .. o, "-w", "1600" }
+  end,
+  dwebp = function(i, o)
+    return { "dwebp", i, "-o", o }
+  end,
+  ["heif-convert"] = function(i, o)
+    return { "heif-convert", i, o }
+  end,
+  avifdec = function(i, o)
+    return { "avifdec", i, o }
+  end,
+  djxl = function(i, o)
+    return { "djxl", i, o }
+  end,
+  magick = function(i, o)
+    return { "magick", i .. "[0]", "-resize", "2000x2000>", o }
+  end,
+  convert = function(i, o)
+    return { "convert", i .. "[0]", "-resize", "2000x2000>", o }
+  end,
+  gm = function(i, o)
+    return { "gm", "convert", i .. "[0]", "-resize", "2000x2000>", o }
+  end,
+  vips = function(i, o)
+    return { "vips", "copy", i, o }
+  end,
+  ffmpeg = function(i, o)
+    return { "ffmpeg", "-y", "-loglevel", "error", "-i", i, "-frames:v", "1", o }
+  end,
+  pil = function(i, o)
+    return { "python3", "-c", PIL_CODE, i, o }
+  end,
+}
+
+-- converters tried in order, per source format (first one installed wins)
+local GENERIC = { "magick", "convert", "gm", "vips", "ffmpeg", "pil" }
+local ORDER = {
+  pdf = { "pdftoppm", "mutool", "gs", "magick", "convert" },
+  svg = { "rsvg-convert", "inkscape", "magick", "convert", "gm", "vips" },
+  webp = { "dwebp", "magick", "convert", "gm", "vips", "ffmpeg", "pil" },
+  heic = { "heif-convert", "magick", "convert", "vips", "ffmpeg" },
+  heif = { "heif-convert", "magick", "convert", "vips", "ffmpeg" },
+  avif = { "avifdec", "magick", "convert", "vips", "ffmpeg", "pil" },
+  jxl = { "djxl", "magick", "convert", "vips" },
+}
+
+local function ext_of(path)
+  return (path:match("%.(%w+)$") or ""):lower()
+end
+
+--- Name of the converter that would be used for files with extension `ext`, or nil.
+function M.converter_name(ext)
+  for _, tool in ipairs(ORDER[ext] or GENERIC) do
+    if exe(tool) then
+      return tool
     end
-  end
-  if ext == "svg" and exe("rsvg-convert") then
-    return { "rsvg-convert", "-w", "1600", "-o", out, path }
-  end
-  if exe("magick") then
-    return { "magick", path .. "[0]", "-resize", "2000x2000>", out }
-  end
-  if exe("convert") then
-    return { "convert", path .. "[0]", "-resize", "2000x2000>", out }
-  end
-  if ext ~= "svg" and exe("ffmpeg") then
-    return { "ffmpeg", "-y", "-loglevel", "error", "-i", path, "-frames:v", "1", out }
   end
   return nil
 end
+
+local function converter_argv(path, out)
+  local tool = M.converter_name(ext_of(path))
+  return tool and BUILD[tool](path, out) or nil
+end
+M._converter_argv = converter_argv
 
 --- Blocking conversion (used by the direct-placement preview). Returns a PNG path or nil.
 function M.png_sync(path)
@@ -333,9 +414,19 @@ function M.png_sync(path)
   return nil
 end
 
-local pending = {}
+local pending, failures = {}, {}
+M._clear_failures = function()
+  failures = {}
+end
 
--- returns png | nil, "pending" | nil, reason
+local function tool_hint(ext)
+  if ext == "pdf" then
+    return "install poppler (pdftoppm) or mupdf-tools"
+  end
+  return "install ImageMagick, libvips or ffmpeg"
+end
+
+-- returns png | nil, "pending" | nil, "convert: reason"
 local function png_for(path, on_done)
   if M.png_size(path) then
     return path
@@ -344,9 +435,13 @@ local function png_for(path, on_done)
   if is_file(out) then
     return out
   end
+  if failures[out] then
+    return nil, failures[out] -- do not retry a failed conversion on every redraw
+  end
   local argv = converter_argv(path, out)
   if not argv then
-    return nil, "needs ImageMagick (or ffmpeg / rsvg-convert) to convert non-PNG images"
+    local ext = ext_of(path)
+    return nil, ("convert: .%s needs a converter (%s)"):format(ext, tool_hint(ext))
   end
   if pending[out] then
     table.insert(pending[out], on_done)
@@ -356,19 +451,23 @@ local function png_for(path, on_done)
   local started = pcall(
     vim.system,
     argv,
-    {},
+    { text = true },
     vim.schedule_wrap(function(res)
       local cbs = pending[out] or {}
       pending[out] = nil
       local ok = res.code == 0 and is_file(out)
+      if not ok then
+        local err = vim.trim((res.stderr or ""):match("[^\n]+") or "")
+        failures[out] = ("convert: %s failed%s"):format(argv[1], err ~= "" and (": " .. err:sub(1, 80)) or "")
+      end
       for _, f in ipairs(cbs) do
-        f(ok and out or nil)
+        f(ok and out or nil, failures[out])
       end
     end)
   )
   if not started then
     pending[out] = nil
-    return nil, "could not run the image converter"
+    return nil, "convert: could not run " .. argv[1]
   end
   return nil, "pending"
 end
@@ -464,9 +563,9 @@ function M.prepare(path, opts, cb)
     return e
   end
 
-  local png, st = png_for(path, function(p)
+  local png, st = png_for(path, function(p, why)
     if not p then
-      cb(nil, "image conversion failed")
+      cb(nil, why or "convert: failed")
       return
     end
     local e, err = finish(p)
@@ -510,12 +609,15 @@ function M.status()
     "raw terminal output: " .. (vim.api.nvim_ui_send and "nvim_ui_send" or "stderr channel (Neovim < 0.11)"),
   }
   local found = {}
-  for _, t in ipairs({ "magick", "convert", "ffmpeg", "rsvg-convert", "pdftoppm", "mutool", "chafa", "viu" }) do
+  for _, t in ipairs({ "magick", "convert", "gm", "vips", "ffmpeg", "rsvg-convert", "inkscape", "dwebp", "heif-convert", "pdftoppm", "mutool", "gs", "chafa", "viu" }) do
     if exe(t) then
       found[#found + 1] = t
     end
   end
   lines[#lines + 1] = "tools found: " .. (#found > 0 and table.concat(found, ", ") or "none")
+  for _, ext in ipairs({ "jpg", "gif", "webp", "svg", "heic", "pdf" }) do
+    lines[#lines + 1] = ("convert .%s -> png: %s"):format(ext, M.converter_name(ext) or ("MISSING - " .. tool_hint(ext)))
+  end
   return lines
 end
 

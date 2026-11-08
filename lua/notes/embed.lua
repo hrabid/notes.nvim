@@ -10,10 +10,11 @@
 local util = require("notes.util")
 local vault = require("notes.vault")
 local image = require("notes.image")
+local files = require("notes.files")
 
 local M = {}
 
-local IMAGE = { png = 1, jpg = 1, jpeg = 1, gif = 1, webp = 1, bmp = 1, svg = 1, avif = 1, tif = 1, tiff = 1 }
+local IMAGE = files.IMAGE
 local OTHER = { pdf = 1, mp3 = 1, wav = 1, ogg = 1, flac = 1, m4a = 1, mp4 = 1, mkv = 1, webm = 1, mov = 1, zip = 1, canvas = 1 }
 local DIRECT_ID = 7351
 
@@ -131,7 +132,7 @@ function M._kind(e)
   if ext == "pdf" then
     return "pdf"
   end
-  if ext and OTHER[ext] then
+  if ext and (OTHER[ext] or files.AUDIO[ext] or files.VIDEO[ext]) then
     return "other"
   end
   return "note"
@@ -780,6 +781,9 @@ local function embed_virt(bufnr, e, cur, want_notes, want_images, width, c)
     end
     if st == "pending" then
       return label((kind == "pdf" and "[pdf] " or "[image] ") .. name .. " (converting...)")
+    end
+    if st and st:match("^convert:") then -- say why it is not rendered
+      return label((kind == "pdf" and "[pdf] " or "[image] ") .. name .. " (" .. (st:gsub("^convert:%s*", "")) .. ")", "WarningMsg")
     end
   end
   if want_notes then

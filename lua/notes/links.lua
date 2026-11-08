@@ -2,6 +2,8 @@
 local util = require("notes.util")
 local vault = require("notes.vault")
 local picker = require("notes.picker")
+local files = require("notes.files")
+local index = require("notes.index")
 
 local M = {}
 
@@ -59,26 +61,32 @@ local function insert_text(ctx, text)
   end
 end
 
-local function pick_file(cb)
+--- File picker over notes (and attachments when opts.attachments). cb(abs, rel, item).
+local function pick_file(cb, opts)
+  opts = opts or {}
   local root = vault.require_root()
   if not root then
     return
   end
-  local files = util.list_md_recursive(root)
-  if #files == 0 then
-    util.notify("no markdown files in vault", vim.log.levels.WARN)
+  local items = files.list(root, { notes = true, attachments = opts.attachments == true })
+  if #items == 0 then
+    util.notify("no files in vault", vim.log.levels.WARN)
     return
   end
-  picker.select(files, { prompt = "Link to file" }, function(rel)
-    cb(root .. "/" .. rel, rel)
+  picker.select(items, { prompt = opts.prompt or "Link to file", preview = true }, function(item)
+    cb(item.abs, item.rel, item)
   end)
 end
 
 local function link_path(from_buf, target_abs)
-  local name = vim.api.nvim_buf_get_name(from_buf)
-  local from_dir = name ~= "" and vim.fs.dirname(name) or vault.get_root()
-  local rel = util.relative_path(from_dir, target_abs)
-  return (rel:gsub(" ", "%%20"))
+  local root = vault.get_root()
+  local p = files.target_path(target_abs, {
+    idx = root and index.get(root) or nil,
+    root = root,
+    note_abs = vim.api.nvim_buf_get_name(from_buf),
+    path_style = cfg().link_path,
+  })
+  return (p:gsub(" ", "%%20"))
 end
 
 local function display_for(rel)
@@ -89,11 +97,23 @@ local function display_for(rel)
   return base
 end
 
+--- Insert a [text](path) link to a note or attachment.
 function M.insert_file_link(_)
   local ctx = capture_cursor()
-  pick_file(function(abs, rel)
-    insert_text(ctx, "[" .. display_for(rel) .. "](" .. link_path(ctx.buf, abs) .. ")")
-  end)
+  pick_file(function(_, _, item)
+    insert_text(
+      ctx,
+      files.link_text(item, {
+        style = "markdown",
+        embed = false,
+        note_abs = vim.api.nvim_buf_get_name(ctx.buf),
+        root = vault.get_root(),
+        idx = vault.get_root() and index.get(vault.get_root()) or nil,
+        path_style = cfg().link_path,
+        display = cfg().link_display,
+      })
+    )
+  end, { attachments = true, prompt = "Link to file" })
 end
 
 function M.insert_header_link(_)
@@ -113,7 +133,7 @@ function M.insert_header_link(_)
       local h = item.heading
       insert_text(ctx, "[" .. h.text .. "](" .. link_path(ctx.buf, abs) .. "#" .. h.anchor .. ")")
     end)
-  end)
+  end, { attachments = false, prompt = "Link to header in" })
 end
 
 -- ── following ────────────────────────────────────────────────────────
@@ -178,7 +198,7 @@ local function is_file(p)
   return st ~= nil and st.type == "file"
 end
 
-local function resolve_target(link, cur_file)
+local function legacy_resolve(link, cur_file)
   local root = vault.get_root()
   local path = link.path
   local cands = {}
@@ -215,6 +235,18 @@ local function resolve_target(link, cur_file)
     end
   end
   return nil
+end
+
+--- Index-based lookup (name-only links, attachment folders) first, then plain paths.
+local function resolve_target(link, cur_file)
+  local root = vault.get_root()
+  if root and link.path ~= "" then
+    local found = index.resolve(index.get(root), link, cur_file)
+    if found then
+      return found
+    end
+  end
+  return legacy_resolve(link, cur_file)
 end
 
 local function native_gf()

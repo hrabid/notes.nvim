@@ -59,6 +59,10 @@ local function item_previewer(previewers)
         lines = vim.api.nvim_buf_get_lines(it.bufnr, 0, -1, false)
       elseif type(it) == "table" and it.filename then
         lines = util.read_lines(it.filename)
+      elseif type(it) == "table" and it.binary then
+        lines = { "(" .. (it.kind or "file") .. ") " .. (it.rel or ""), "", "binary file - no text preview" }
+      elseif type(it) == "table" and it.abs and it.kind == "note" then
+        lines = util.read_lines(it.abs)
       end
       lines = lines or {}
       local pbuf = self.state.bufnr

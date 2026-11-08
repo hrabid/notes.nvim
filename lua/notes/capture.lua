@@ -1,215 +1,14 @@
--- notes.nvim: capture - daily/weekly notes and clipboard image paste
+-- notes.nvim: capture - clipboard image paste, and the embed picker (<leader>me)
 local util = require("notes.util")
 local vault = require("notes.vault")
-local template = require("notes.template")
+local picker = require("notes.picker")
+local files = require("notes.files")
+local index = require("notes.index")
 
 local M = {}
 
 local function cfg()
   return require("notes").config
-end
-
--- ── dates (pure) ─────────────────────────────────────────────────────
-
---- `t` shifted by n days (noon-based, so DST changes cannot skip/repeat a day).
-function M._add_days(t, n)
-  local d = os.date("*t", t)
-  d.day = d.day + n
-  d.hour, d.min, d.sec = 12, 0, 0
-  d.isdst = nil
-  return os.time(d)
-end
-
-local function iso_weekday(t)
-  local wday = os.date("*t", t).wday -- 1 = Sunday
-  return wday == 1 and 7 or wday - 1 -- 1 = Monday
-end
-
-function M._monday_of(t)
-  return M._add_days(t, -(iso_weekday(t) - 1))
-end
-
---- Monday of ISO week `w` of ISO year `y`.
-function M._iso_monday(y, w)
-  local jan4 = os.time({ year = y, month = 1, day = 4, hour = 12 }) -- always in week 1
-  return M._add_days(jan4, -(iso_weekday(jan4) - 1) + (w - 1) * 7)
-end
-
---- Lua pattern + token names for an os.date format made of %Y %G %m %d %V and literals.
-function M._fmt_pattern(fmt)
-  local names, parts = {}, {}
-  local i = 1
-  while i <= #fmt do
-    local c = fmt:sub(i, i)
-    if c == "%" then
-      local t = fmt:sub(i + 1, i + 1)
-      if t == "Y" or t == "G" then
-        parts[#parts + 1] = "(%d%d%d%d)"
-        names[#names + 1] = t
-      elseif t == "m" or t == "d" or t == "V" then
-        parts[#parts + 1] = "(%d%d)"
-        names[#names + 1] = t
-      elseif t == "%" then
-        parts[#parts + 1] = "%%"
-      else
-        return nil -- unsupported token: cannot parse names back into dates
-      end
-      i = i + 2
-    else
-      parts[#parts + 1] = (c:gsub("[%^%$%(%)%%%.%[%]%*%+%-%?]", "%%%0"))
-      i = i + 1
-    end
-  end
-  return "^" .. table.concat(parts) .. "$", names
-end
-
-function M._parse(fmt, name)
-  local pat, names = M._fmt_pattern(fmt)
-  if not pat then
-    return nil
-  end
-  local caps = { name:match(pat) }
-  if #caps == 0 then
-    return nil
-  end
-  local out = {}
-  for i, n in ipairs(names) do
-    out[n] = tonumber(caps[i])
-  end
-  return out
-end
-
-function M._time_of(p)
-  if p.Y and p.m and p.d then
-    return os.time({ year = p.Y, month = p.m, day = p.d, hour = 12 })
-  end
-  if p.G and p.V then
-    return M._iso_monday(p.G, p.V)
-  end
-  return nil
-end
-
--- ── periodic notes ───────────────────────────────────────────────────
-
-local function period_dir(root, kind)
-  local c = cfg()
-  local d = util.expand_path(kind == "daily" and c.daily_dir or c.weekly_dir)
-  return d:sub(1, 1) == "/" and d or (root .. "/" .. d)
-end
-
-local function period_ctx(kind, t)
-  local c = cfg()
-  if kind == "daily" then
-    return {
-      date = os.date(c.date_format, t),
-      yesterday = os.date(c.daily_format, M._add_days(t, -1)),
-      tomorrow = os.date(c.daily_format, M._add_days(t, 1)),
-      weekday = os.date("%A", t),
-    }
-  end
-  local monday = M._monday_of(t)
-  return {
-    date = os.date(c.date_format, monday),
-    week_start = os.date(c.date_format, monday),
-    prev_week = os.date(c.weekly_format, M._add_days(t, -7)),
-    next_week = os.date(c.weekly_format, M._add_days(t, 7)),
-  }
-end
-
-local function open_period(kind, t)
-  local root = vault.require_root()
-  if not root then
-    return
-  end
-  local c = cfg()
-  local name = os.date(kind == "daily" and c.daily_format or c.weekly_format, t)
-  local dir = period_dir(root, kind)
-  local path = util.expand_path(dir .. "/" .. name .. ".md")
-  local is_new = vim.uv.fs_stat(path) == nil
-  vim.fn.mkdir(dir, "p")
-  template.forced[path] = false -- the periodic template replaces the default auto-inject
-  local ok, err = pcall(vim.cmd, "edit " .. vim.fn.fnameescape(path))
-  template.forced[path] = nil
-  if not ok then
-    util.notify(tostring(err), vim.log.levels.ERROR)
-    return
-  end
-  if is_new then
-    local tname = kind == "daily" and c.daily_template or c.weekly_template
-    if tname then
-      local ctx = period_ctx(kind, t)
-      vim.schedule(function()
-        template.inject(vim.api.nvim_get_current_buf(), tname, { ctx = ctx })
-      end)
-    end
-  end
-end
-
-local function parse_when(arg, step_days)
-  local now = os.time()
-  if not arg or arg == "" then
-    return now
-  end
-  local y, m, d = arg:match("^(%d%d%d%d)-(%d%d)-(%d%d)$")
-  if y then
-    return os.time({ year = tonumber(y), month = tonumber(m), day = tonumber(d), hour = 12 })
-  end
-  local n = tonumber(arg)
-  if n then
-    return M._add_days(now, n * step_days)
-  end
-  return nil
-end
-
---- Open (creating from daily_template) today's note, or arg = offset in days / YYYY-MM-DD.
-function M.daily(arg)
-  local t = parse_when(arg, 1)
-  if not t then
-    util.notify("usage: :NoteDaily [days-offset | YYYY-MM-DD]", vim.log.levels.WARN)
-    return
-  end
-  open_period("daily", t)
-end
-
---- Open this week's note, or arg = offset in weeks / any YYYY-MM-DD inside the week.
-function M.weekly(arg)
-  local t = parse_when(arg, 7)
-  if not t then
-    util.notify("usage: :NoteWeekly [weeks-offset | YYYY-MM-DD]", vim.log.levels.WARN)
-    return
-  end
-  open_period("weekly", t)
-end
-
---- Which periodic note is the current buffer? Returns kind, time | nil.
-local function current_period()
-  local root = vault.get_root()
-  local abs = util.expand_path(vim.api.nvim_buf_get_name(0))
-  if not root or abs == "" then
-    return nil
-  end
-  local c = cfg()
-  local name = vim.fn.fnamemodify(abs, ":t:r")
-  for _, kind in ipairs({ "daily", "weekly" }) do
-    if vim.fs.dirname(abs) == util.expand_path(period_dir(root, kind)) then
-      local p = M._parse(kind == "daily" and c.daily_format or c.weekly_format, name)
-      local t = p and M._time_of(p)
-      if t then
-        return kind, t
-      end
-    end
-  end
-  return nil
-end
-
---- Next (dir = 1) / previous (dir = -1) daily or weekly note relative to the current one.
-function M.step(dir)
-  local kind, t = current_period()
-  if not kind then
-    util.notify("not in a daily/weekly note (or its format cannot be parsed back)", vim.log.levels.WARN)
-    return
-  end
-  open_period(kind, M._add_days(t, dir * (kind == "daily" and 1 or 7)))
 end
 
 -- ── clipboard image paste ────────────────────────────────────────────
@@ -248,18 +47,6 @@ function M._paste_dir(root, c)
     end
   end
   return root .. "/attachments"
-end
-
-function M._link_text(style, img_abs, note_abs, root)
-  local fname = vim.fs.basename(img_abs)
-  if style == "wiki" then
-    return "![[" .. fname .. "]]"
-  end
-  local from = note_abs ~= "" and vim.fs.dirname(note_abs) or root
-  local rel = util.relative_path(from, img_abs)
-  rel = rel:gsub(" ", "%%20")
-  local alt = fname:gsub("%.%w+$", "")
-  return ("![%s](%s)"):format(alt, rel)
 end
 
 local function sanitize(name, ext)
@@ -321,7 +108,7 @@ local function run(cmd)
   return nil
 end
 
---- Save the clipboard image into the attachment folder and insert a link at the cursor.
+--- Save the clipboard image into the attachment folder and embed it at the cursor.
 function M.paste_image(name_arg)
   local root = vault.require_root()
   if not root then
@@ -372,11 +159,20 @@ function M.paste_image(name_arg)
       f:write(res.stdout)
       f:close()
     end
+    index.invalidate()
     if not (vim.api.nvim_win_is_valid(win) and vim.api.nvim_win_get_buf(win) == buf) then
       util.notify("saved " .. path .. " (the original window changed, link not inserted)", vim.log.levels.WARN)
       return
     end
-    local text = M._link_text(c.paste_link_style, path, vim.api.nvim_buf_get_name(buf), root)
+    local item = { kind = "image", abs = path, rel = vim.fs.basename(path) }
+    local text = files.link_text(item, {
+      style = c.embed_style,
+      embed = true,
+      note_abs = vim.api.nvim_buf_get_name(buf),
+      root = root,
+      idx = index.get(root),
+      path_style = c.link_path,
+    })
     vim.api.nvim_win_call(win, function()
       vim.api.nvim_put({ text }, "c", true, true)
     end)
@@ -395,6 +191,48 @@ function M.paste_image(name_arg)
       end
     end)
   end
+end
+
+-- ── embed picker ─────────────────────────────────────────────────────
+
+--- Pick a note or attachment (images, pdf, audio, anything in the attachment folders)
+--- and embed it at the cursor in the configured style.
+function M.embed()
+  local root = vault.require_root()
+  if not root then
+    return
+  end
+  local win, buf = vim.api.nvim_get_current_win(), vim.api.nvim_get_current_buf()
+  local cur = util.expand_path(vim.api.nvim_buf_get_name(buf))
+  local items = {}
+  for _, it in ipairs(files.list(root, { notes = true, attachments = true })) do
+    if it.abs ~= cur then
+      items[#items + 1] = it
+    end
+  end
+  if #items == 0 then
+    util.notify("nothing to embed in the vault", vim.log.levels.WARN)
+    return
+  end
+  picker.select(items, { prompt = "Embed", preview = true }, function(item)
+    if not (vim.api.nvim_win_is_valid(win) and vim.api.nvim_win_get_buf(win) == buf) then
+      util.notify("the original window changed, nothing inserted", vim.log.levels.WARN)
+      return
+    end
+    local c = cfg()
+    local text = files.link_text(item, {
+      style = c.embed_style,
+      embed = true,
+      note_abs = vim.api.nvim_buf_get_name(buf),
+      root = root,
+      idx = index.get(root),
+      path_style = c.link_path,
+      display = c.link_display,
+    })
+    vim.api.nvim_win_call(win, function()
+      vim.api.nvim_put({ text }, "c", true, true)
+    end)
+  end)
 end
 
 return M

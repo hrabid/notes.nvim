@@ -40,8 +40,7 @@ Variables: `{{date}} {{time}} {{datetime}} {{filename}} {{title}} {{uuid}} {{cur
 | `<leader>mp` | preview the link/embed under the cursor (note / image) |
 | `<leader>mE` | toggle inline note embeds (virtual lines) |
 | `<leader>mi` | toggle inline images for this buffer |
-| `<leader>md` / `<leader>mw` | today's daily note / this week's note (global) |
-| `<leader>m>` / `<leader>m<` | next / previous daily or weekly note |
+| `<leader>me` | embed a note, image, pdf or any attachment from the vault (picker) |
 | `<leader>mP` | paste the clipboard image into the vault and link it |
 | `<leader>ms` | search the vault's text (global) |
 | `<leader>mT` / `<leader>mF` | browse tags / frontmatter properties (global) |
@@ -65,27 +64,27 @@ Variables: `{{date}} {{time}} {{datetime}} {{filename}} {{title}} {{uuid}} {{cur
 
 ## Commands
 
-`:TemplateInsert [name]`, `:TemplateReload`, `:NotesVault`, `:NoteNew [name]`, `:NoteMove [dir]`, `:NoteRename [name]`, `:NoteBacklinks`, `:NoteCheck [file]`, `:NoteDaily [offset|date]`, `:NoteWeekly [offset|date]`, `:NoteNext`, `:NotePrev`, `:NotePasteImage [name]`, `:NoteSearch [text]`, `:NoteTags [tag]`, `:NoteProps [key[=value]]`, `:NoteToc [maxlevel]`, `:NoteFollow [split|vsplit|tab]`, `:NoteLinkConvert [wiki|markdown]`, `:NoteTask`, `:NoteTasks [open|done|all|file]`, `:NoteReindex`, `:NoteOutline [maxlevel]`, `:NoteOutlineToggle`, `:NotePreview`, `:NoteEmbedInline`, `:NoteImageToggle`, `:NoteImageStatus`
+`:TemplateInsert [name]`, `:TemplateReload`, `:NotesVault`, `:NoteNew [name]`, `:NoteMove [dir]`, `:NoteRename [name]`, `:NoteBacklinks`, `:NoteCheck [file]`, `:NoteEmbed`, `:NotePasteImage [name]`, `:NoteSearch [text]`, `:NoteTags [tag]`, `:NoteProps [key[=value]]`, `:NoteToc [maxlevel]`, `:NoteFollow [split|vsplit|tab]`, `:NoteLinkConvert [wiki|markdown]`, `:NoteTask`, `:NoteTasks [open|done|all|file]`, `:NoteReindex`, `:NoteOutline [maxlevel]`, `:NoteOutlineToggle`, `:NotePreview`, `:NoteEmbedInline`, `:NoteImageToggle`, `:NoteImageStatus`
 
 ## Capture
 
-**Daily / weekly notes.** `:NoteDaily` (`<leader>md`) opens today's note, creating it in `daily_dir` from
-`daily_template`; `:NoteDaily -1`, `:NoteDaily 2026-11-08` open other days. `:NoteWeekly` (`<leader>mw`) does the same
-for ISO weeks (`weekly_dir`, `weekly_format`, `weekly_template`). `<leader>m>` / `<leader>m<` (`:NoteNext` /
-`:NotePrev`) step to the next/previous day or week from a daily/weekly note (formats made of `%Y %m %d` /
-`%G %V` can be parsed back). Daily templates get `{{yesterday}} {{tomorrow}} {{weekday}}` (and `{{date}}` is the
-note's date), weekly ones `{{prev_week}} {{next_week}} {{week_start}}`:
+**Embed picker.** `<leader>me` / `:NoteEmbed` lists the vault's notes and attachments (everything inside
+`attachment_dir` / `attachment_dirs`, plus images, pdf, audio and video anywhere) and embeds the pick at the
+cursor: `![name](rel/path.png)` (`embed_style = "wiki"` for `![[name.png]]`). Notes, images, pdf, audio and
+video are embedded with `!`; anything else (zip, ...) becomes a plain link. `<leader>ml` lists the same files
+for ordinary `[text](path)` links, `<leader>mh` stays notes-only.
 
-```markdown
----
-title: {{date}}
----
-[[{{yesterday}}]] | [[{{tomorrow}}]]
-```
+**Link paths.** `link_path = "shortest"` (default, Obsidian's behaviour) writes just the file name when it is unique in
+the vault - `![](photo.png)`, `[note](note.md)` - and the shortest unique path (`folder/note.md`) when it is not;
+`"relative"` writes `../static/photo.png`. Every feature resolves name-only links anywhere in the vault
+(attachment folders first): `gf`, `<leader>mp` previews, inline images, `:NoteCheck`, backlinks, move/rename (a
+name-only link is left alone when its file moves and rewritten only when the name changes). Other tools
+(GitHub, static site generators, marksman) expect real relative paths - use `"relative"` for such vaults.
+Applies to `<leader>ml`, `<leader>mh`, `<leader>me`, pasted images, link conversion and completion.
 
 **Paste image.** `<leader>mP` / `:NotePasteImage [name]` saves the clipboard image (`wl-paste` on Wayland, `xclip`
 on X11, `pngpaste` on macOS) into `attachment_dir` (else an existing conventional folder in the vault root, else
-`<vault>/attachments`) and inserts `![name](relative/path.png)` (`paste_link_style = "wiki"` for `![[name.png]]`).
+`<vault>/attachments`) and inserts `![name](relative/path.png)` (`embed_style = "wiki"` for `![[name.png]]`).
 You are asked for the name (default `image-YYYYMMDD-HHMMSS`; `paste_name = "auto"` skips the prompt); clashes get `-1`, `-2`.
 
 **Template prompts.** `{{prompt:Label}}` or `{{prompt:Label|default}}` in a template asks for a value when the template
@@ -119,6 +118,12 @@ is injected (same label = asked once; cancel aborts). Works in frontmatter and b
   (telescope preview), `file` for the current note.
 - **Embed sizes**: `![[img.png|300]]`, `![[img.png|300x200]]` and `![alt|300](img.png)` set the width (px) of the
   inline image (roughly 9 px per terminal column).
+- **Image formats**: PNG is drawn as is. Everything else (`jpg jpeg jfif gif webp bmp svg avif tif tiff heic heif jxl
+  ico apng`, first frame) is converted to PNG once, cached, by the first converter installed:
+  ImageMagick (`magick`/`convert`), GraphicsMagick, libvips, ffmpeg or Pillow, and for specific formats
+  `rsvg-convert`/`inkscape` (svg), `dwebp` (webp), `heif-convert` (heic), `avifdec`, `djxl`.
+  Without any converter only PNG renders and the embed shows a label saying what to install
+  (`:NoteImageStatus` / `:checkhealth notes` list what was found). Arch: `sudo pacman -S imagemagick` (or `libvips`).
 - **PDF**: `![[doc.pdf]]` / `[](doc.pdf)` previews and renders the first page inline (needs `pdftoppm` or `mutool`,
   or ImageMagick + ghostscript); `<leader>mp` falls back to opening the PDF in the system viewer.
 
