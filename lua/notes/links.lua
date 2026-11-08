@@ -224,10 +224,15 @@ local function native_gf()
   end
 end
 
-function M.follow_link(_)
+function M.follow_link(_, opts)
+  opts = opts or {}
   local pos = vim.api.nvim_win_get_cursor(0)
   local link = M._parse_link_under_cursor(vim.api.nvim_get_current_line(), pos[2])
   if not link then
+    if opts.open then
+      util.notify("no link under the cursor", vim.log.levels.WARN)
+      return
+    end
     return native_gf()
   end
   if link.url then
@@ -236,6 +241,11 @@ function M.follow_link(_)
   end
 
   local cur_file = vim.api.nvim_buf_get_name(0)
+  local function split_first()
+    if opts.open then
+      vim.cmd(opts.open == "tab" and "tab split" or opts.open)
+    end
+  end
 
   -- same-file anchor: [x](#heading)
   if link.path == "" and link.anchor then
@@ -244,6 +254,7 @@ function M.follow_link(_)
       util.notify("anchor not found: #" .. link.anchor, vim.log.levels.WARN)
       return
     end
+    split_first()
     if cur_file ~= "" then
       M._push_stack(cur_file, pos[1], pos[2])
     end
@@ -258,6 +269,7 @@ function M.follow_link(_)
     return
   end
 
+  split_first()
   if target ~= cur_file then
     local ok, err = pcall(vim.cmd, "edit " .. vim.fn.fnameescape(target))
     if not ok then

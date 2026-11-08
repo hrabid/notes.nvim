@@ -47,7 +47,7 @@ local function detect()
   return cached
 end
 
--- telescope previewer for items carrying { bufnr, lnum }
+-- telescope previewer for items carrying { bufnr | filename, lnum }
 local function item_previewer(previewers)
   local ns = vim.api.nvim_create_namespace("notes_preview")
   return previewers.new_buffer_previewer({
@@ -57,6 +57,8 @@ local function item_previewer(previewers)
       local lines
       if type(it) == "table" and it.bufnr and vim.api.nvim_buf_is_valid(it.bufnr) then
         lines = vim.api.nvim_buf_get_lines(it.bufnr, 0, -1, false)
+      elseif type(it) == "table" and it.filename then
+        lines = util.read_lines(it.filename)
       end
       lines = lines or {}
       local pbuf = self.state.bufnr
@@ -151,6 +153,10 @@ function M.select(items, opts, on_select)
     end
   end
   backends[detect()](items, opts, cb)
+end
+
+function M.backend()
+  return detect()
 end
 
 function M.reset()

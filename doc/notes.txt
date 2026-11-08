@@ -17,6 +17,19 @@ SETUP                                                          *notes-setup*
       link_display      = "filename",
       wikilinks         = false,
       link_stack_max    = 50,
+      update_links      = "ask",
+      daily_dir         = "daily",
+      daily_format      = "%Y-%m-%d",
+      daily_template    = nil,
+      weekly_dir        = "weekly",
+      weekly_format     = "%G-W%V",
+      weekly_template   = nil,
+      paste_link_style  = "markdown",
+      paste_name        = "ask",
+      toc_min_level     = 1,
+      toc_max_level     = 3,
+      toc_auto_update   = true,
+      index_watch       = true,
       outline_width     = 36,
       outline_side      = "right",
       embed_backends    = { "kitty", "kitty-direct", "chafa", "viu", "external" },
@@ -41,7 +54,23 @@ COMMANDS                                                    *notes-commands*
 :TemplateReload          Re-read the templates directory.
 :NotesVault              Print the detected vault root.
 :NoteNew [name]          Create a note in new_note_dir.
-:NoteMove [dir]          Move the current note to dir (picker if omitted).
+:NoteMove [dir]          Move the current note to dir (picker if omitted); links are updated.
+:NoteRename [name]       Rename the current note; links are updated.
+:NoteBacklinks           Notes that link to the current note.
+:NoteCheck [file]        Broken links / missing headings -> quickfix.
+:NoteDaily [offset|date]  Open a daily note.
+:NoteWeekly [offset|date] Open a weekly note.
+:NoteNext / :NotePrev    Step through daily/weekly notes.
+:NotePasteImage [name]   Save the clipboard image and link it.
+:NoteSearch [text]       Search the vault's text.
+:NoteTags [tag]          Browse tags.
+:NoteProps [key[=value]] Browse frontmatter properties.
+:NoteToc [maxlevel]      Insert/update the table of contents.
+:NoteFollow [split|vsplit|tab]  Follow the link in a new window.
+:NoteLinkConvert [wiki|markdown]  Convert link style (cursor / whole buffer).
+:NoteTask                Toggle checkbox(es).
+:NoteTasks [open|done|all|file]  Task picker.
+:NoteReindex             Rebuild the vault index.
 :NoteOutline [maxlevel]  Heading outline picker for the current buffer.
 :NoteOutlineToggle       Toggle the outline sidebar.
 :NotePreview             Preview the link/embed under the cursor.
@@ -57,6 +86,18 @@ KEYMAPS                                                      *notes-keymaps*
 <leader>mh   Link a header (file, then header)
 <leader>mn   New note (global)
 <leader>mm   Move note to another directory
+<leader>mR   Rename note
+<leader>mk   Backlinks
+<leader>mc   Check links
+<leader>md   Daily note       <leader>mw   Weekly note
+<leader>m> / <  Next / previous daily or weekly note
+<leader>mP   Paste clipboard image
+<leader>ms   Search vault     <leader>mT   Tags      <leader>mF   Properties
+<leader>mC   Table of contents
+<leader>m] [   Next / previous link
+<leader>m} {   Next / previous heading
+<leader>m- | +  Follow link in split / vsplit / tab
+<leader>mL   Convert link style    <leader>mx   Toggle checkbox    <leader>mX   Open tasks
 <leader>mo   Outline picker
 <leader>mO   Outline sidebar
 <leader>mp   Preview link/embed under cursor

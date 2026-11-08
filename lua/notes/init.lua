@@ -21,6 +21,25 @@ M.defaults = {
   link_display = "filename", -- "filename" | "title"
   wikilinks = false,
   link_stack_max = 50,
+  update_links = "ask", -- "ask" | true | false: rewrite links when a note is moved/renamed
+
+  -- capture
+  daily_dir = "daily", -- relative to the vault root, or absolute
+  daily_format = "%Y-%m-%d",
+  daily_template = nil, -- template name for new daily notes (nil = empty note)
+  weekly_dir = "weekly",
+  weekly_format = "%G-W%V", -- ISO week
+  weekly_template = nil,
+  paste_link_style = "markdown", -- "markdown" | "wiki": link inserted by image paste
+  paste_name = "ask", -- "ask" | "auto": prompt for the pasted image's name
+
+  -- housekeeping
+  index_watch = true, -- watch vault directories so the cached index notices new/removed/renamed files
+
+  -- table of contents
+  toc_min_level = 1,
+  toc_max_level = 3,
+  toc_auto_update = true, -- refresh an existing <!-- toc --> block on save
 
   -- outline sidebar
   outline_width = 36,
@@ -58,6 +77,13 @@ local move = require("notes.move")
 local outline = require("notes.outline")
 local embed = require("notes.embed")
 local image = require("notes.image")
+local integrity = require("notes.integrity")
+local capture = require("notes.capture")
+local search = require("notes.search")
+local nav = require("notes.nav")
+local index = require("notes.index")
+local edit = require("notes.edit")
+local completion = require("notes.completion")
 local picker = require("notes.picker")
 local util = require("notes.util")
 
@@ -75,6 +101,9 @@ local function validate(c)
     c.embed_backends = M.defaults.embed_backends
   end
   enum("inline_images", { true, false, "auto" })
+  enum("update_links", { "ask", true, false })
+  enum("paste_link_style", { "markdown", "wiki" })
+  enum("paste_name", { "ask", "auto" })
   enum("image_protocol", { "auto", "kitty", "none" })
   if type(c.attachment_dirs) ~= "table" then
     c.attachment_dirs = M.defaults.attachment_dirs
@@ -166,6 +195,17 @@ local function attach(bufnr)
     return
   end
   embed.auto_attach(bufnr)
+  if M.config.toc_auto_update then
+    local g = vim.api.nvim_create_augroup("NotesToc", { clear = false })
+    vim.api.nvim_clear_autocmds({ group = g, buffer = bufnr })
+    vim.api.nvim_create_autocmd("BufWritePre", {
+      group = g,
+      buffer = bufnr,
+      callback = function()
+        nav.update_toc(bufnr)
+      end,
+    })
+  end
   if not M.config.keymaps then
     return
   end
@@ -190,6 +230,61 @@ local function attach(bufnr)
   end, "outline picker")
   map("<leader>mO", outline.toggle, "outline sidebar")
   map("<leader>mp", embed.preview, "preview link/embed")
+  map("<leader>mR", guard(function()
+    move.rename(bufnr)
+  end), "rename note")
+  map("<leader>mk", guard(integrity.backlinks), "backlinks")
+  map("<leader>m>", guard(function()
+    capture.step(1)
+  end), "next daily/weekly note")
+  map("<leader>m<", guard(function()
+    capture.step(-1)
+  end), "previous daily/weekly note")
+  map("<leader>mP", guard(function()
+    capture.paste_image()
+  end), "paste image from clipboard")
+  map("<leader>mC", function()
+    nav.toc()
+  end, "table of contents")
+  map("<leader>mL", function()
+    edit.convert_link()
+  end, "convert link style (wiki <-> markdown)")
+  map("<leader>mx", function()
+    local row = vim.api.nvim_win_get_cursor(0)[1]
+    edit.toggle_range(row, row + vim.v.count1 - 1)
+  end, "toggle checkbox")
+  vim.keymap.set("x", "<leader>mx", function()
+    local a, b = vim.fn.line("v"), vim.fn.line(".")
+    if a > b then
+      a, b = b, a
+    end
+    vim.api.nvim_feedkeys(vim.keycode("<Esc>"), "nx", false)
+    edit.toggle_range(a, b)
+  end, { buffer = bufnr, desc = "Notes: toggle checkboxes" })
+  map("<leader>m]", function()
+    nav.jump_link(1)
+  end, "next link")
+  map("<leader>m[", function()
+    nav.jump_link(-1)
+  end, "previous link")
+  map("<leader>m}", function()
+    nav.jump_heading(1)
+  end, "next heading")
+  map("<leader>m{", function()
+    nav.jump_heading(-1)
+  end, "previous heading")
+  map("<leader>m-", function()
+    links.follow_link(bufnr, { open = "split" })
+  end, "follow link in split")
+  map("<leader>m|", function()
+    links.follow_link(bufnr, { open = "vsplit" })
+  end, "follow link in vsplit")
+  map("<leader>m+", function()
+    links.follow_link(bufnr, { open = "tab" })
+  end, "follow link in tab")
+  map("<leader>mc", guard(function()
+    integrity.check()
+  end), "check links")
   map("<leader>mE", function()
     embed.toggle_inline(bufnr)
   end, "toggle inline note embeds")
@@ -207,6 +302,8 @@ function M.setup(opts)
   M.config = vim.tbl_deep_extend("force", M.defaults, opts or {})
   validate(M.config)
   picker.reset()
+  index.setup()
+  completion.setup()
   vault.detect()
 
   vim.api.nvim_create_user_command("TemplateInsert", function(o)
@@ -244,6 +341,85 @@ function M.setup(opts)
   vim.api.nvim_create_user_command("NoteImageStatus", function()
     print(table.concat(image.status(), "\n"))
   end, { desc = "Show image rendering capabilities" })
+  vim.api.nvim_create_user_command("NoteDaily", function(o)
+    capture.daily(o.args)
+  end, { nargs = "?", desc = "Open a daily note: today, +/-N days or YYYY-MM-DD" })
+  vim.api.nvim_create_user_command("NoteWeekly", function(o)
+    capture.weekly(o.args)
+  end, { nargs = "?", desc = "Open a weekly note: this week, +/-N weeks or a date" })
+  vim.api.nvim_create_user_command("NoteNext", function()
+    capture.step(1)
+  end, { desc = "Next daily/weekly note" })
+  vim.api.nvim_create_user_command("NotePrev", function()
+    capture.step(-1)
+  end, { desc = "Previous daily/weekly note" })
+  vim.api.nvim_create_user_command("NotePasteImage", function(o)
+    capture.paste_image(o.args)
+  end, { nargs = "?", desc = "Save the clipboard image into the vault and link it" })
+  vim.api.nvim_create_user_command("NoteSearch", function(o)
+    search.text(o.args)
+  end, { nargs = "?", desc = "Search the vault's text" })
+  vim.api.nvim_create_user_command("NoteTags", function(o)
+    search.tags(o.args)
+  end, { nargs = "?", desc = "Browse tags" })
+  vim.api.nvim_create_user_command("NoteProps", function(o)
+    search.props(o.args)
+  end, { nargs = "?", desc = "Browse frontmatter properties (key or key=value)" })
+  vim.api.nvim_create_user_command("NoteToc", function(o)
+    nav.toc(tonumber(o.args))
+  end, { nargs = "?", desc = "Insert/update the table of contents (optional max level)" })
+  vim.api.nvim_create_user_command("NoteFollow", function(o)
+    links.follow_link(nil, { open = (o.args ~= "" and o.args or "split") })
+  end, {
+    nargs = "?",
+    complete = function()
+      return { "split", "vsplit", "tab" }
+    end,
+    desc = "Follow the link under the cursor in a split/vsplit/tab",
+  })
+  vim.api.nvim_create_user_command("NoteLinkConvert", function(o)
+    edit.convert_link(o.args ~= "" and o.args or nil)
+  end, {
+    nargs = "?",
+    complete = function()
+      return { "wiki", "markdown" }
+    end,
+    desc = "Convert the link under the cursor (or all links to wiki/markdown)",
+  })
+  vim.api.nvim_create_user_command("NoteTask", function(o)
+    edit.toggle_range(o.line1, o.line2)
+  end, { range = true, desc = "Toggle checkbox(es) on the line(s)" })
+  vim.api.nvim_create_user_command("NoteTasks", function(o)
+    edit.tasks(o.args)
+  end, {
+    nargs = "?",
+    complete = function()
+      return { "open", "done", "all", "file" }
+    end,
+    desc = "Task picker: open (default), done, all, or file",
+  })
+  vim.api.nvim_create_user_command("NoteReindex", function()
+    local root = vault.require_root()
+    if not root then
+      return
+    end
+    index.invalidate()
+    local st = index.get(root)
+    util.notify(("indexed %d markdown file(s)"):format(#st.md))
+  end, { desc = "Rebuild the vault index" })
+  vim.api.nvim_create_user_command("NoteRename", function(o)
+    move.rename(nil, o.args)
+  end, { nargs = "?", desc = "Rename the current note and update links to it" })
+  vim.api.nvim_create_user_command("NoteBacklinks", integrity.backlinks, { desc = "Notes that link to this one" })
+  vim.api.nvim_create_user_command("NoteCheck", function(o)
+    integrity.check(o.args == "file" and "file" or nil)
+  end, {
+    nargs = "?",
+    complete = function()
+      return { "file" }
+    end,
+    desc = "Find broken links/headings (vault, or `file`) -> quickfix",
+  })
   vim.api.nvim_create_user_command("NoteMove", function(o)
     local buf = vim.api.nvim_get_current_buf()
     if o.args ~= "" then
@@ -268,6 +444,24 @@ function M.setup(opts)
     vim.keymap.set("n", "<leader>mn", function()
       M.new_note()
     end, { desc = "Notes: new note" })
+    vim.keymap.set("n", "<leader>md", function()
+      capture.daily()
+    end, { desc = "Notes: today's daily note" })
+    vim.keymap.set("n", "<leader>mw", function()
+      capture.weekly()
+    end, { desc = "Notes: this week's note" })
+    vim.keymap.set("n", "<leader>ms", function()
+      search.text()
+    end, { desc = "Notes: search vault" })
+    vim.keymap.set("n", "<leader>mT", function()
+      search.tags()
+    end, { desc = "Notes: tags" })
+    vim.keymap.set("n", "<leader>mF", function()
+      search.props()
+    end, { desc = "Notes: frontmatter properties" })
+    vim.keymap.set("n", "<leader>mX", function()
+      edit.tasks()
+    end, { desc = "Notes: open tasks" })
   end
 
   local group = vim.api.nvim_create_augroup("Notes", { clear = true })
@@ -276,10 +470,13 @@ function M.setup(opts)
     group = group,
     pattern = "*.md",
     callback = function(args)
+      local path = vim.api.nvim_buf_get_name(args.buf)
+      if template.take_forced(util.expand_path(path)) ~= nil then
+        return -- capture.lua applies its own template
+      end
       if not M.config.auto_inject then
         return
       end
-      local path = vim.api.nvim_buf_get_name(args.buf)
       if not vault.is_in_vault(path) or template.is_template_path(path) then
         return
       end

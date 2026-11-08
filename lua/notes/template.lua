@@ -22,6 +22,29 @@ function M.is_template_path(path)
   return d ~= nil and path:sub(1, #d + 1) == d .. "/"
 end
 
+--- Paths whose BufNewFile auto-inject must be skipped (value false) - set by capture.lua.
+M.forced = {}
+
+function M.take_forced(path)
+  local v = M.forced[path]
+  M.forced[path] = nil
+  return v
+end
+
+--- {{prompt:Label}} / {{prompt:Label|default}} placeholders, in order, unique by label.
+function M._prompts(content)
+  local out, seen = {}, {}
+  for inner in content:gmatch("{{%s*prompt:(.-)}}") do
+    local label, default = inner:match("^([^|]*)|?(.*)$")
+    label = vim.trim(label)
+    if label ~= "" and not seen[label] then
+      seen[label] = true
+      out[#out + 1] = { label = label, default = default ~= "" and default or nil }
+    end
+  end
+  return out
+end
+
 --- Template names (no extension). Returns names, err.
 function M.list()
   local dir = template_dir()
@@ -68,6 +91,16 @@ function M.resolve(content, ctx, name)
     local fm_line = in_fm
     if in_fm and i > 1 and line == "---" then
       in_fm = false
+    end
+
+    if ctx.prompt then
+      line = line:gsub("{{%s*prompt:(.-)}}", function(inner)
+        local v = ctx.prompt[vim.trim(inner:match("^([^|]*)"))]
+        if v == nil then
+          return nil
+        end
+        return v
+      end)
     end
 
     line = line:gsub("{{%s*([%w_]+)%s*}}", function(var)
@@ -161,14 +194,8 @@ function M.is_empty(bufnr)
     and (vim.api.nvim_buf_get_lines(bufnr, 0, 1, false)[1] or "") == ""
 end
 
-function M.inject(bufnr, name)
-  bufnr = (bufnr == nil or bufnr == 0) and vim.api.nvim_get_current_buf() or bufnr
+local function do_inject(bufnr, name, content, opts, values)
   local c = cfg()
-
-  local content = M.load(name)
-  if not content then
-    return false
-  end
 
   local fname = vim.fn.fnamemodify(vim.api.nvim_buf_get_name(bufnr), ":t:r")
   local now = {
@@ -183,6 +210,10 @@ function M.inject(bufnr, name)
     title = util.to_title_case(fname),
     uuid = util.uuid(),
   }
+  ctx.prompt = values
+  for k, v in pairs(opts.ctx or {}) do
+    ctx[k] = v
+  end
   local res = M.resolve(content, ctx, name)
 
   local start
@@ -213,6 +244,40 @@ function M.inject(bufnr, name)
     end
     pcall(vim.api.nvim_win_set_cursor, win, pos)
   end
+  return true
+end
+
+--- Inject template `name`. {{prompt:...}} placeholders are asked for first (vim.ui.input).
+--- opts.ctx: extra/overriding template variables.
+function M.inject(bufnr, name, opts)
+  opts = opts or {}
+  bufnr = (bufnr == nil or bufnr == 0) and vim.api.nvim_get_current_buf() or bufnr
+  local content = M.load(name)
+  if not content then
+    return false
+  end
+  local prompts = M._prompts(content)
+  if #prompts == 0 then
+    return do_inject(bufnr, name, content, opts, {})
+  end
+  local values, i = {}, 1
+  local function ask()
+    local p = prompts[i]
+    if not p then
+      do_inject(bufnr, name, content, opts, values)
+      return
+    end
+    vim.ui.input({ prompt = p.label .. ": ", default = p.default }, function(v)
+      if v == nil then
+        util.notify("template cancelled")
+        return
+      end
+      values[p.label] = v
+      i = i + 1
+      ask()
+    end)
+  end
+  ask()
   return true
 end
 

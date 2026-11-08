@@ -288,6 +288,14 @@ end
 
 local function converter_argv(path, out)
   local ext = (path:match("%.(%w+)$") or ""):lower()
+  if ext == "pdf" then -- first page
+    if exe("pdftoppm") then
+      return { "pdftoppm", "-png", "-f", "1", "-l", "1", "-r", "110", "-singlefile", path, (out:gsub("%.png$", "")) }
+    end
+    if exe("mutool") then
+      return { "mutool", "draw", "-r", "110", "-o", out, path, "1" }
+    end
+  end
   if ext == "svg" and exe("rsvg-convert") then
     return { "rsvg-convert", "-w", "1600", "-o", out, path }
   end
@@ -432,6 +440,10 @@ function M.prepare(path, opts, cb)
     if not w or w == 0 or h == 0 then
       return nil, "unreadable image"
     end
+    if opts.want_w then -- requested display width in px, e.g. ![[img.png|300]]
+      h = opts.want_h or math.max(1, math.floor(h * opts.want_w / w))
+      w = opts.want_w
+    end
     local cols, rows = M._fit(w, h, opts.maxc, opts.maxr, cfg().image_cell_ratio or 2.0)
     local key = png .. ":" .. cols .. "x" .. rows .. "|" .. (opts.slot or "")
     local e = cache[key]
@@ -498,7 +510,7 @@ function M.status()
     "raw terminal output: " .. (vim.api.nvim_ui_send and "nvim_ui_send" or "stderr channel (Neovim < 0.11)"),
   }
   local found = {}
-  for _, t in ipairs({ "magick", "convert", "ffmpeg", "rsvg-convert", "chafa", "viu" }) do
+  for _, t in ipairs({ "magick", "convert", "ffmpeg", "rsvg-convert", "pdftoppm", "mutool", "chafa", "viu" }) do
     if exe(t) then
       found[#found + 1] = t
     end

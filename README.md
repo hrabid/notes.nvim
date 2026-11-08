@@ -40,6 +40,21 @@ Variables: `{{date}} {{time}} {{datetime}} {{filename}} {{title}} {{uuid}} {{cur
 | `<leader>mp` | preview the link/embed under the cursor (note / image) |
 | `<leader>mE` | toggle inline note embeds (virtual lines) |
 | `<leader>mi` | toggle inline images for this buffer |
+| `<leader>md` / `<leader>mw` | today's daily note / this week's note (global) |
+| `<leader>m>` / `<leader>m<` | next / previous daily or weekly note |
+| `<leader>mP` | paste the clipboard image into the vault and link it |
+| `<leader>ms` | search the vault's text (global) |
+| `<leader>mT` / `<leader>mF` | browse tags / frontmatter properties (global) |
+| `<leader>mC` | insert/update a table of contents |
+| `<leader>m]` / `<leader>m[` | next / previous link (count works) |
+| `<leader>m}` / `<leader>m{` | next / previous heading (count works) |
+| `<leader>m-` / `<leader>m\|` / `<leader>m+` | follow the link in a split / vsplit / tab |
+| `<leader>mx` | toggle the checkbox on the line (count / visual range work) |
+| `<leader>mX` | open tasks across the vault (global) |
+| `<leader>mL` | convert the link under the cursor between `[[wiki]]` and `[markdown](links)` |
+| `<leader>mR` | rename the note and update links to it |
+| `<leader>mk` | backlinks: notes that link here |
+| `<leader>mc` | check the vault for broken links/headings (quickfix) |
 | `<leader>mb` | back through link-follow history         |
 | `<leader>mr` | re-read templates dir                    |
 | `<leader>mv` | print vault root                         |
@@ -50,7 +65,87 @@ Variables: `{{date}} {{time}} {{datetime}} {{filename}} {{title}} {{uuid}} {{cur
 
 ## Commands
 
-`:TemplateInsert [name]`, `:TemplateReload`, `:NotesVault`, `:NoteNew [name]`, `:NoteMove [dir]`, `:NoteOutline [maxlevel]`, `:NoteOutlineToggle`, `:NotePreview`, `:NoteEmbedInline`, `:NoteImageToggle`, `:NoteImageStatus`
+`:TemplateInsert [name]`, `:TemplateReload`, `:NotesVault`, `:NoteNew [name]`, `:NoteMove [dir]`, `:NoteRename [name]`, `:NoteBacklinks`, `:NoteCheck [file]`, `:NoteDaily [offset|date]`, `:NoteWeekly [offset|date]`, `:NoteNext`, `:NotePrev`, `:NotePasteImage [name]`, `:NoteSearch [text]`, `:NoteTags [tag]`, `:NoteProps [key[=value]]`, `:NoteToc [maxlevel]`, `:NoteFollow [split|vsplit|tab]`, `:NoteLinkConvert [wiki|markdown]`, `:NoteTask`, `:NoteTasks [open|done|all|file]`, `:NoteReindex`, `:NoteOutline [maxlevel]`, `:NoteOutlineToggle`, `:NotePreview`, `:NoteEmbedInline`, `:NoteImageToggle`, `:NoteImageStatus`
+
+## Capture
+
+**Daily / weekly notes.** `:NoteDaily` (`<leader>md`) opens today's note, creating it in `daily_dir` from
+`daily_template`; `:NoteDaily -1`, `:NoteDaily 2026-11-08` open other days. `:NoteWeekly` (`<leader>mw`) does the same
+for ISO weeks (`weekly_dir`, `weekly_format`, `weekly_template`). `<leader>m>` / `<leader>m<` (`:NoteNext` /
+`:NotePrev`) step to the next/previous day or week from a daily/weekly note (formats made of `%Y %m %d` /
+`%G %V` can be parsed back). Daily templates get `{{yesterday}} {{tomorrow}} {{weekday}}` (and `{{date}}` is the
+note's date), weekly ones `{{prev_week}} {{next_week}} {{week_start}}`:
+
+```markdown
+---
+title: {{date}}
+---
+[[{{yesterday}}]] | [[{{tomorrow}}]]
+```
+
+**Paste image.** `<leader>mP` / `:NotePasteImage [name]` saves the clipboard image (`wl-paste` on Wayland, `xclip`
+on X11, `pngpaste` on macOS) into `attachment_dir` (else an existing conventional folder in the vault root, else
+`<vault>/attachments`) and inserts `![name](relative/path.png)` (`paste_link_style = "wiki"` for `![[name.png]]`).
+You are asked for the name (default `image-YYYYMMDD-HHMMSS`; `paste_name = "auto"` skips the prompt); clashes get `-1`, `-2`.
+
+**Template prompts.** `{{prompt:Label}}` or `{{prompt:Label|default}}` in a template asks for a value when the template
+is injected (same label = asked once; cancel aborts). Works in frontmatter and body.
+
+## Search and navigation
+
+- `<leader>ms` / `:NoteSearch [text]`: live full-text search over the vault's markdown (telescope or fzf-lua; ripgrep +
+  list fallback).
+- `<leader>mT` / `:NoteTags [tag]`: pick a tag (with note counts), then a note. Inline `#tags` and frontmatter
+  `tags:` are both indexed (code blocks/spans, headings and urls are ignored).
+- `<leader>mF` / `:NoteProps [key[=value]]`: key, then value, then note, from frontmatter
+  (`key: value`, `key: [a, b]`, `- item` lists).
+- `<leader>m]` / `[`: next/previous link or embed, `<leader>m}` / `{`: next/previous heading (wrap around; `3<leader>m]` jumps 3).
+- `<leader>m-` / `|` / `+` (`:NoteFollow [split|vsplit|tab]`): follow the link under the cursor in a new split / vsplit / tab.
+- `<leader>mC` / `:NoteToc [maxlevel]`: inserts `<!-- toc -->` ... `<!-- /toc -->` with a nested list of heading links at the
+  cursor, or refreshes the existing block. With `toc_auto_update = true` (default) the block is refreshed on every
+  save. `toc_min_level` / `toc_max_level` (1-3) pick the levels.
+
+## Editing
+
+- **Completion** (blink.cmp / nvim-cmp): `[[` notes and attachments, `[[note#` headings, `](` relative paths,
+  `](note.md#` anchors and `#tags`. blink.cmp: add the provider
+  `providers = { notes = { name = "notes", module = "notes.blink" } }` and `"notes"` to `sources.default`
+  (or `per_filetype.markdown`). nvim-cmp: the source `notes` is registered automatically, add `{ name = "notes" }`.
+- **Link style conversion**: `<leader>mL` / `:NoteLinkConvert` converts the link under the cursor between
+  `[[Note#Heading|text]]` and `[text](../Note.md#heading)`; `:NoteLinkConvert wiki` / `markdown` converts every
+  link in the buffer. Unresolvable links are skipped. Ambiguous note names keep their path in wiki form.
+- **Tasks**: `<leader>mx` toggles `- [ ]` / `- [x]` (adds a checkbox to list items and plain lines; works on a
+  count or a visual range). `<leader>mX` / `:NoteTasks [open|done|all|file]` lists tasks across the vault
+  (telescope preview), `file` for the current note.
+- **Embed sizes**: `![[img.png|300]]`, `![[img.png|300x200]]` and `![alt|300](img.png)` set the width (px) of the
+  inline image (roughly 9 px per terminal column).
+- **PDF**: `![[doc.pdf]]` / `[](doc.pdf)` previews and renders the first page inline (needs `pdftoppm` or `mutool`,
+  or ImageMagick + ghostscript); `<leader>mp` falls back to opening the PDF in the system viewer.
+
+## Housekeeping
+
+- **Vault index**: the file structure and the per-note parse results (links, headings, tags, tasks, properties)
+  are cached. Unchanged notes are never re-read (mtime/size check), the file list is rebuilt only when files were
+  added, removed or renamed: directory watchers (`index_watch = true`), plus `FocusGained` and saves.
+  `:NoteReindex` forces a rebuild. Backlinks, `:NoteCheck`, move/rename, tags, properties, tasks and completion
+  all share it.
+- **`:checkhealth notes`** reports Neovim version, vault, index, templates, picker, image support (terminal, tmux,
+  converters), clipboard tool and completion plugin.
+
+## Link integrity
+
+`:NoteMove` / `<leader>mm` and `:NoteRename` / `<leader>mR` rewrite links pointing at the note and the
+relative links inside it (`update_links = "ask"` asks first; `true` always, `false` never).
+Link styles are preserved: markdown `[](../x.md#h)` and wiki `[[x]]` / `[[folder/x]]`, `![]()` embeds,
+`%20` escaping, `<angle brackets>`, a dropped `.md` stays dropped, vault-absolute `/a/b.md`, anchors untouched.
+Name-only links (`[[x]]`) are only rewritten when the file *name* changes. Links in code blocks/spans
+and in your templates folder are left alone. Open buffers are updated; unmodified ones are saved,
+modified ones stay unsaved.
+
+`<leader>mk` lists the notes linking to the current one (telescope preview), `<leader>mc` /
+`:NoteCheck` puts every broken link and missing `#heading` in the vault into the quickfix list
+(`:NoteCheck file` for just the current note). Resolution matches the preview lookup (direct path,
+attachment folders, then file name anywhere in the vault).
 
 ## Outline sidebar (`<leader>mO`)
 

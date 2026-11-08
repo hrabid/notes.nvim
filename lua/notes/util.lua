@@ -112,6 +112,19 @@ function M.read_lines(path)
   return ok and lines or nil
 end
 
+--- "300" -> 300, nil ; "300x200" -> 300, 200 ; anything else -> nil
+function M.parse_size(s)
+  local w, h = s:match("^(%d+)x(%d+)$")
+  if w then
+    return tonumber(w), tonumber(h)
+  end
+  w = s:match("^(%d+)$")
+  if w then
+    return tonumber(w), nil
+  end
+  return nil
+end
+
 --- Files directly inside `path`, optionally filtered by extension (no dot).
 function M.list_dir(path, ext)
   local out = {}
@@ -196,6 +209,30 @@ end
 --- First file under root whose relative path equals / ends with `name` (shallowest first).
 function M.find_file(root, name, icase)
   return find_walk(root, "", name, 0, icase)
+end
+
+local function walk_files(dir, rel, out, depth)
+  if depth > 20 then
+    return
+  end
+  for name, t in vim.fs.dir(dir) do
+    if name:sub(1, 1) ~= "." then
+      local r = rel == "" and name or (rel .. "/" .. name)
+      if t == "directory" then
+        walk_files(dir .. "/" .. name, r, out, depth + 1)
+      elseif t == "file" then
+        out[#out + 1] = r
+      end
+    end
+  end
+end
+
+--- All files under root (relative paths, hidden entries skipped).
+function M.list_files_recursive(root)
+  local out = {}
+  walk_files(root, "", out, 0)
+  table.sort(out)
+  return out
 end
 
 --- All .md files under root (relative paths, hidden dirs skipped).

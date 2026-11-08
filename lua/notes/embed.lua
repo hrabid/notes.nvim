@@ -41,18 +41,31 @@ function M._find_refs(line)
     end
     local path, anchor = parse_wiki(inner)
     local emb = s > 1 and line:sub(s - 1, s - 1) == "!"
-    out[#out + 1] = { s = emb and s - 1 or s, e = e, target = path, anchor = anchor, wiki = true, embed = emb }
+    local ref = { s = emb and s - 1 or s, e = e, target = path, anchor = anchor, wiki = true, embed = emb }
+    local alias = inner:match("|(.*)$")
+    local w, h = util.parse_size(alias and vim.trim(alias) or "")
+    if w then
+      ref.size = { w = w, h = h }
+    end
+    out[#out + 1] = ref
     init = e + 1
   end
   init = 1
   while true do
-    local s, e, _, raw = line:find("%[([^%]]*)%]%(([^)]*)%)", init)
+    local s, e, text, raw = line:find("%[([^%]]*)%]%(([^)]*)%)", init)
     if not s then
       break
     end
     local emb = s > 1 and line:sub(s - 1, s - 1) == "!"
     local t = raw:match("^%s*<(.-)>") or raw:match("^%s*(%S+)") or ""
     local ref = { s = emb and s - 1 or s, e = e, wiki = false, embed = emb }
+    local sz = text:match("|([%dx]+)$")
+    if sz then
+      local w, h = util.parse_size(sz)
+      if w then
+        ref.size = { w = w, h = h }
+      end
+    end
     if t:match("^%a[%w+.-]*://") then
       ref.target, ref.url = t, t
     else
@@ -114,6 +127,9 @@ function M._kind(e)
   ext = ext and ext:lower()
   if ext and IMAGE[ext] then
     return "image"
+  end
+  if ext == "pdf" then
+    return "pdf"
   end
   if ext and OTHER[ext] then
     return "other"
@@ -624,14 +640,14 @@ local function show_ansi(tool, path, on_fail)
   end
 end
 
-local function attempt(path, idx)
+local function attempt(path, idx, orig)
   local name = cfg().embed_backends[idx]
   if not name then
     util.notify("no image backend could display " .. path .. " (see :NoteImageStatus)", vim.log.levels.WARN)
     return
   end
   local nextf = function()
-    attempt(path, idx + 1)
+    attempt(path, idx + 1, orig)
   end
   if name == "kitty" then
     if image.capable() then
@@ -646,7 +662,7 @@ local function attempt(path, idx)
   elseif name == "chafa" or name == "viu" then
     show_ansi(name, path, nextf)
   elseif name == "external" then
-    if not vim.ui.open(path) then
+    if not vim.ui.open(orig or path) then
       nextf()
     end
   else
@@ -699,6 +715,13 @@ function M.preview()
     show_note(path, e.anchor)
   elseif kind == "image" then
     attempt(path, 1)
+  elseif kind == "pdf" then
+    local png = image.png_sync(path) -- first page
+    if png then
+      attempt(png, 1, path)
+    else
+      vim.ui.open(path)
+    end
   else
     vim.ui.open(path)
   end
@@ -747,6 +770,8 @@ local function embed_virt(bufnr, e, cur, want_notes, want_images, width, c)
       maxc = math.min(c.image_max_cols, math.max(1, width)),
       maxr = c.image_max_rows,
       slot = "inline",
+      want_w = e.size and e.size.w,
+      want_h = e.size and e.size.h,
     }, function()
       schedule_render(bufnr)
     end)
@@ -754,11 +779,11 @@ local function embed_virt(bufnr, e, cur, want_notes, want_images, width, c)
       return image.virt_lines(img)
     end
     if st == "pending" then
-      return label("[image] " .. name .. " (converting...)")
+      return label((kind == "pdf" and "[pdf] " or "[image] ") .. name .. " (converting...)")
     end
   end
   if want_notes then
-    return label("[image] " .. name)
+    return label((kind == "pdf" and "[pdf] " or "[image] ") .. name)
   end
   return nil
 end
